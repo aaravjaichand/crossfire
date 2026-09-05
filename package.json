@@ -10,11 +10,14 @@
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "seed": "tsx scripts/seed.ts",
-    "seed:check": "tsx scripts/seed-check.ts"
+    "seed:check": "tsx scripts/seed-check.ts",
+    "auditor:run": "tsx scripts/auditor-run.ts",
+    "auditor:check-policy": "tsx src/lib/auditor/policy.check.ts"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.2",
     "next": "15.5.25",
+    "openai": "^7.10.0",
     "pdf-lib": "^1.17.1",
     "postgres": "^3.4.9",
     "react": "19.1.0",
