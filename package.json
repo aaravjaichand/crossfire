@@ -11,6 +11,8 @@
     "db:studio": "drizzle-kit studio",
     "seed": "tsx scripts/seed.ts",
     "seed:check": "tsx scripts/seed-check.ts",
+    "accountant": "tsx scripts/accountant.ts",
+    "test:accountant": "tsx scripts/test-accountant.ts",
     "auditor:run": "tsx scripts/auditor-run.ts",
     "auditor:check-policy": "tsx src/lib/auditor/policy.check.ts"
   },
