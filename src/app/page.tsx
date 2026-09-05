@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { count } from "drizzle-orm";
 import { db, schema } from "@/db";
 
@@ -47,6 +48,12 @@ export default async function Home() {
         </tbody>
       </table>
       <p className="mt-6 text-sm">
+        Referee screen:{" "}
+        <Link className="underline" href="/audit/mock">
+          /audit/mock
+        </Link>
+      </p>
+      <p className="mt-2 text-sm">
         Health check:{" "}
         <a className="underline" href="/api/health">
           /api/health
