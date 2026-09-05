@@ -131,9 +131,18 @@ export const auditExchanges = pgTable("audit_exchanges", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
-// Placeholder table. Worker C adds columns later.
+// No FKs to the audit tables: a run can be refereed before its rows exist (the
+// UI ships with a mock run), so run_id is text and holds either an audit_runs
+// id rendered as a string or a synthetic id such as "mock".
 export const refereeDecisions = pgTable("referee_decisions", {
   id: serial("id").primaryKey(),
+  runId: text("run_id").notNull(),
+  // bank_transaction | invoice | dodo_transaction
+  sampleType: text("sample_type").notNull(),
+  sampleId: integer("sample_id").notNull(),
+  // approve | redirect | concede
+  decision: text("decision").notNull(),
+  note: text("note"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
