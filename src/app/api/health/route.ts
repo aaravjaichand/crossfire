@@ -9,7 +9,9 @@ export async function GET() {
     await db.execute(pgsql`select 1`);
     return NextResponse.json({ ok: true, db: "ok" });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ ok: false, db: message }, { status: 500 });
+    // Log the detail server-side; never echo driver errors (they can include
+    // host names or connection string fragments) to the client.
+    console.error("health check: database query failed", err);
+    return NextResponse.json({ ok: false, db: "error" }, { status: 500 });
   }
 }
