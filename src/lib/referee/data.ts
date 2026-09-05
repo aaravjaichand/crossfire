@@ -1,8 +1,10 @@
 import type { EvidenceBundle, SampleType } from "./evidence-types";
-import { buildMockRun } from "./mock-run";
-import { getDecisions, type StoredDecision } from "./decisions";
+import { buildMockRun, MOCK_RUN_ID } from "./mock-run";
+import { buildRealRun } from "./real-run";
+import { loadDecisions, type StoredDecision } from "./decisions";
 
 export { formatSampleId, parseSampleId } from "./sample-id";
+export { MOCK_RUN_ID } from "./mock-run";
 
 export type SampleStatus = "open" | "defended" | "gap" | "conceded";
 
@@ -16,7 +18,10 @@ export type MessageView = {
 };
 
 export type SampleView = {
-  id: string; // "invoice:5"
+  /** "invoice:5" — the underlying source row. URLs and referee_decisions use this. */
+  id: string;
+  /** audit_samples.id, the conversation row. Real runs only; never in a URL. */
+  auditSampleId?: number;
   type: SampleType;
   label: string;
   amount: string;
@@ -26,8 +31,10 @@ export type SampleView = {
 };
 
 export type RunView = {
+  /** The run key decisions are filed under: an audit_runs id as a string, or "mock". */
   id: string;
   name: string;
+  kind: "mock" | "real";
   samples: SampleView[];
 };
 
@@ -49,17 +56,47 @@ export function coverage(run: RunView): { defended: number; total: number; perce
   return { defended, total, percent };
 }
 
-// Every unknown run id falls back to the mock run. Swapping in Worker B's
-// audit_runs / audit_samples / audit_exchanges tables means replacing the body
-// of this function; nothing else in the UI reads the database.
-export async function getRun(runId: string): Promise<RunView> {
-  const run = await buildMockRun(runId);
-  const decisions = await getDecisions(runId);
-  return { ...run, samples: run.samples.map((s) => applyDecisions(s, decisions.get(s.id))) };
+/**
+ * Everything the left pane and the coverage ring are derived from, in one
+ * short string. The thread poll returns it so the client can tell when the
+ * rest of the page has gone stale and needs a refresh, not just the open
+ * thread it is watching.
+ */
+export function runVersion(run: RunView): string {
+  return run.samples.map((s) => `${s.id}:${s.status}:${s.thread.length}`).join("|");
+}
+
+/**
+ * A numeric run id addresses a real audit_runs row and nothing else. Anything
+ * else is the mock run, which always files its decisions under "mock" whatever
+ * path was used to reach it, so a mock decision can never be inherited by a
+ * real run that is created with that id later.
+ */
+export function resolveRunId(runId: string): { kind: "real"; id: number } | { kind: "mock" } {
+  if (/^\d+$/.test(runId)) {
+    const id = Number(runId);
+    if (Number.isSafeInteger(id) && id > 0) return { kind: "real", id };
+  }
+  return { kind: "mock" };
+}
+
+/** null means the caller asked for a real run id that does not exist. */
+export async function getRun(runId: string): Promise<RunView | null> {
+  const resolved = resolveRunId(runId);
+  const run =
+    resolved.kind === "real" ? await buildRealRun(resolved.id) : await buildMockRun(MOCK_RUN_ID);
+  if (!run) return null;
+
+  const decisions = await loadDecisions(run.id);
+  return {
+    ...run,
+    samples: run.samples.map((s) => applyDecisions(run.kind, s, decisions.get(s.id))),
+  };
 }
 
 export async function getSample(runId: string, sampleId: string): Promise<SampleView | null> {
   const run = await getRun(runId);
+  if (!run) return null;
   return run.samples.find((s) => s.id === sampleId) ?? null;
 }
 
@@ -69,16 +106,23 @@ const STATUS_AFTER: Record<StoredDecision["decision"], SampleStatus> = {
   redirect: "open",
 };
 
-function applyDecisions(sample: SampleView, decisions: StoredDecision[] | undefined): SampleView {
+/**
+ * Referee turns are appended to the thread for both kinds of run. The status
+ * differs: a real run carries it on audit_samples.status, written in the same
+ * transaction as the decision, so that column stays authoritative. The mock
+ * run has no such row, so its status is derived from the decisions themselves.
+ */
+function applyDecisions(
+  kind: RunView["kind"],
+  sample: SampleView,
+  decisions: StoredDecision[] | undefined,
+): SampleView {
   if (!decisions || decisions.length === 0) return sample;
   const thread = [...sample.thread];
   for (const d of decisions) {
-    thread.push({
-      turn: thread.length + 1,
-      role: "referee",
-      content: refereeLine(d),
-    });
+    thread.push({ turn: thread.length + 1, role: "referee", content: refereeLine(d) });
   }
+  if (kind === "real") return { ...sample, thread };
   const last = decisions[decisions.length - 1];
   return { ...sample, status: STATUS_AFTER[last.decision], thread };
 }

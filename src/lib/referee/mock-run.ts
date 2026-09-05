@@ -1,12 +1,23 @@
 import { inArray } from "drizzle-orm";
 import { db, schema } from "@/db";
-import type { Citation, Gap, SampleRef } from "./evidence-types";
+import type { Citation, EvidenceBundle, Gap, SampleRef } from "./evidence-types";
 import type { MessageView, RunView, SampleStatus, SampleView } from "./data";
+import { bankLabel, dodoLabel, invoiceLabel } from "./labels";
 import { formatSampleId } from "./sample-id";
 
-// A hand-written run over real seeded rows. The prose is fixed; every number in
-// the evidence panel is read out of the database at request time, so a citation
-// that stops matching the seed fails loudly instead of drifting.
+// A hand-written run over real seeded rows, used until an auditor run exists to
+// point the screen at. Two invariants hold it together:
+//
+//   1. Every number on screen is read out of the database at request time. The
+//      prose is fixed; the citations are {table, id, field} specs resolved
+//      against the live row, so a citation that stops matching the seed throws
+//      with the table and id instead of quietly showing a stale figure.
+//   2. Every factual sentence carries an inline [table#id] citation naming a
+//      row in that turn's bundle, the same invariant the accountant enforces on
+//      model prose. referee/citations.check.ts runs the accountant's own
+//      validateDefense over all of it.
+
+export const MOCK_RUN_ID = "mock";
 
 type TableName =
   | "vendors"
@@ -18,13 +29,18 @@ type TableName =
 
 type CitationSpec = { table: TableName; id: number; field: string; reason: string };
 
-type TurnSpec =
-  | { role: "auditor"; content: string }
-  | { role: "accountant"; content: string; citations: CitationSpec[]; gaps: Gap[] };
+export type TurnSpec = {
+  role: "auditor" | "accountant";
+  content: string;
+  /** Rows the prose may cite. Rendered as evidence cards for accountant turns;
+   * auditor turns use them only to validate their inline citations. */
+  citations: CitationSpec[];
+  gaps?: Gap[];
+};
 
-type SampleSpec = { ref: SampleRef; status: SampleStatus; turns: TurnSpec[] };
+export type SampleSpec = { ref: SampleRef; status: SampleStatus; turns: TurnSpec[] };
 
-const SAMPLES: SampleSpec[] = [
+export const SAMPLES: SampleSpec[] = [
   {
     ref: { type: "invoice", id: 15 },
     status: "gap",
@@ -32,12 +48,15 @@ const SAMPLES: SampleSpec[] = [
       {
         role: "auditor",
         content:
-          "Invoice HPP-2025-03 is booked to Rent for March. Walk me from the invoice to the cash that left the account, and show that it left exactly once.",
+          "Invoice HPP-2025-03 is booked to Rent for March 2025 [invoices#15]. Walk me from the invoice to the cash that left the account, and show that it left exactly once.",
+        citations: [
+          { table: "invoices", id: 15, field: "invoice_number", reason: "The invoice under examination." },
+        ],
       },
       {
         role: "accountant",
         content:
-          "The invoice itself is clean; the cash side is not. Harbor Point Properties LLC billed $9,200.00 on 2025-03-01, which is exactly the monthly rate on contract 2. The bank feed then settles reference HPP-2025-03 twice, on 2025-03-24 and again on 2025-03-27, for $9,200.00 each, and both settlements are booked. Cash is credited $18,400.00 against a payable of $9,200.00. I can defend the first payment and not the second.",
+          "The invoice itself is clean; the cash side is not. Harbor Point Properties LLC billed $9,200.00 on 2025-03-01 [invoices#15], which is exactly the monthly rate on the contract [contracts#2]. The bank feed then settles reference HPP-2025-03 twice, on 2025-03-24 [bank_transactions#72] and again on 2025-03-27 [bank_transactions#73]. Both settlements are booked, so Cash is credited twice [ledger_entries#314, #326] against a single payable. I can defend the first payment and not the second.",
         citations: [
           { table: "invoices", id: 15, field: "amount", reason: "The invoice being settled, priced at the contract rate." },
           { table: "contracts", id: 2, field: "monthly_rate", reason: "Contract rate for Harbor Point rent matches the invoice to the cent." },
@@ -63,12 +82,15 @@ const SAMPLES: SampleSpec[] = [
       {
         role: "auditor",
         content:
-          "STR-2025-05 is $2,775.00 above every other Stratus invoice this year. Show me the pricing authority for that amount.",
+          "Invoice STR-2025-05 bills $21,275.00 [invoices#5], more than any other Stratus invoice this year. Show me the pricing authority for that amount.",
+        citations: [
+          { table: "invoices", id: 5, field: "amount", reason: "The invoice under examination." },
+        ],
       },
       {
         role: "accountant",
         content:
-          "There isn't one. Contract 1 fixes the Stratus monthly rate at $18,500.00 for the whole of 2025, and every other Stratus invoice bills exactly that. STR-2025-05 bills $21,275.00, fifteen percent over the rate. It was approved by Priya Natarajan and paid in full on 2025-05-17. I can find no amendment, change order, or credit that supports the excess.",
+          "There is none on file. The contract fixes the Stratus monthly rate at $18,500.00 for all of 2025 [contracts#1], and the January invoice bills exactly that [invoices#1]. This one bills $21,275.00 [invoices#5], fifteen percent over the rate, and it was approved as issued [invoices#5]. The bank settled the billed amount rather than the contracted one on 2025-05-17 [bank_transactions#109], and the expense was recognised at the higher figure [ledger_entries#457]. No amendment or credit note supports the $2,775.00 difference [contracts#1, invoices#5].",
         citations: [
           { table: "contracts", id: 1, field: "monthly_rate", reason: "The contracted monthly rate the invoice should have billed." },
           { table: "invoices", id: 5, field: "amount", reason: "The amount actually billed, 15% above the contract rate." },
@@ -80,8 +102,7 @@ const SAMPLES: SampleSpec[] = [
         gaps: [
           {
             kind: "rate_mismatch",
-            description:
-              "Invoice 5 exceeds contract 1's monthly rate by $2,775.00 with no amendment on file.",
+            description: "Invoice 5 exceeds contract 1's monthly rate by $2,775.00 with no amendment on file.",
           },
         ],
       },
@@ -94,16 +115,18 @@ const SAMPLES: SampleSpec[] = [
       {
         role: "auditor",
         content:
-          "A $7,850.00 wire left the account on 2025-09-12. Who is Kestrel Holdings Ltd, and what authorised the payment?",
+          "A wire for $7,850.00 left the account on 2025-09-12 [bank_transactions#202]. Who is Kestrel Holdings Ltd [bank_transactions#202], and what authorised the payment?",
+        citations: [
+          { table: "bank_transactions", id: 202, field: "counterparty", reason: "The payee on the wire under examination." },
+        ],
       },
       {
         role: "accountant",
         content:
-          "I cannot place them. Kestrel Holdings Ltd is not in the vendor table, is not a payroll counterparty, and is not Dodo. No invoice or contract names them. The only support for the payment is the wire itself, reference WIRE-20250912-4471, and it was booked straight to Consulting Expense with nothing behind the classification.",
+          "I cannot place them. The payee on the wire is Kestrel Holdings Ltd [bank_transactions#202], and no vendor row carries that name. There is no invoice or contract naming them either, so the reference WIRE-20250912-4471 is the only support the payment has [bank_transactions#202]. It was booked straight to Consulting Expense [ledger_entries#1025] against Cash [ledger_entries#1026], with no document behind the classification.",
         citations: [
           { table: "bank_transactions", id: 202, field: "counterparty", reason: "The payee has no matching row in vendors." },
           { table: "bank_transactions", id: 202, field: "amount", reason: "The amount leaving the account, above the $5,000 wire threshold." },
-          { table: "bank_transactions", id: 202, field: "reference", reason: "The only reference on the payment; it appears nowhere else in the books." },
           { table: "ledger_entries", id: 1025, field: "account", reason: "The expense account the wire was booked to without a supporting document." },
           { table: "ledger_entries", id: 1026, field: "credit", reason: "Cash credited for the full wire amount." },
         ],
@@ -128,12 +151,15 @@ const SAMPLES: SampleSpec[] = [
       {
         role: "auditor",
         content:
-          "Refund ref_nx3ulzfvg9d7 on 2025-04-12. Show me the journal entry that reverses the revenue.",
+          "A refund of $499.00 was processed on 2025-04-12 [dodo_transactions#92]. Show me the journal entry that reverses the revenue.",
+        citations: [
+          { table: "dodo_transactions", id: 92, field: "amount", reason: "The refund under examination." },
+        ],
       },
       {
         role: "accountant",
         content:
-          "There is no such entry. The original payment pay_v5wed4ozzxvkyo for $499.00 on 2025-04-01 is booked correctly, debiting Dodo Clearing and crediting Revenue. The refund of the same $499.00 has no ledger row at all, while the April payout already deducted it. April revenue is overstated by the refund amount and Dodo Clearing does not net to zero for the month.",
+          "There is no such entry. The original payment for $499.00 on 2025-04-01 [dodo_transactions#82] is booked correctly, debiting Dodo Clearing [ledger_entries#355] and crediting Revenue [ledger_entries#356]. The refund of the same amount [dodo_transactions#92] has no ledger row of its own, so April revenue is overstated. The April payout had already deducted the refund, which is why Dodo Clearing does not net to zero for that month [dodo_transactions#92].",
         citations: [
           { table: "dodo_transactions", id: 92, field: "amount", reason: "The refund amount that never reached the ledger." },
           { table: "dodo_transactions", id: 82, field: "reference", reason: "The original payment the refund reverses." },
@@ -143,8 +169,7 @@ const SAMPLES: SampleSpec[] = [
         gaps: [
           {
             kind: "missing_ledger_entry",
-            description:
-              "No ledger row carries source_type dodo and source_id 92, so the $499.00 refund is unbooked.",
+            description: "No ledger row carries source_type dodo and source_id 92, so the $499.00 refund is unbooked.",
           },
         ],
       },
@@ -157,15 +182,17 @@ const SAMPLES: SampleSpec[] = [
       {
         role: "auditor",
         content:
-          "ACH-20250620-BHI, $3,120.00 to Bellhaven Insurance Group on 2025-06-20. Which invoice does it settle?",
+          "A payment of $3,120.00 went out on 2025-06-20 under reference ACH-20250620-BHI [bank_transactions#133]. Which invoice does it settle?",
+        citations: [
+          { table: "bank_transactions", id: 133, field: "reference", reason: "The payment under examination." },
+        ],
       },
       {
         role: "accountant",
         content:
-          "None that I can find. Bellhaven is vendor 5 and its contract bills $2,350.00 a month, so the amount does not match a monthly invoice either. The payment is still debited to Accounts Payable, which means it reduces a payable that no invoice ever created.",
+          "None that I can find. The payee is a known vendor [vendors#5], so this is not an unknown counterparty. Its contract bills $2,350.00 a month [contracts#5], which does not match the amount paid [bank_transactions#133]. The payment was still debited to Accounts Payable [ledger_entries#653] with Cash credited [ledger_entries#654], so it cleared a payable that no invoice created.",
         citations: [
           { table: "bank_transactions", id: 133, field: "amount", reason: "The payment with no invoice behind it." },
-          { table: "bank_transactions", id: 133, field: "reference", reason: "The reference does not match any invoice number." },
           { table: "vendors", id: 5, field: "name", reason: "The payee is a known vendor, which rules out an unknown counterparty." },
           { table: "contracts", id: 5, field: "monthly_rate", reason: "The contracted monthly amount does not match the payment either." },
           { table: "ledger_entries", id: 653, field: "debit", reason: "Accounts Payable debited without an originating invoice." },
@@ -182,15 +209,19 @@ const SAMPLES: SampleSpec[] = [
       {
         role: "auditor",
         content:
-          "Insurance is often billed annually. Is $3,120.00 a multiple or fraction of the monthly rate, or a premium adjustment?",
+          "Insurance is often billed annually rather than monthly. Is the amount a multiple of the contracted monthly rate, or a premium adjustment [contracts#5]?",
+        citations: [
+          { table: "contracts", id: 5, field: "monthly_rate", reason: "The contracted rate the payment is being tested against." },
+        ],
       },
       {
         role: "accountant",
         content:
-          "Neither cleanly. $3,120.00 is not a whole multiple of the $2,350.00 monthly rate, and the contract holds no premium adjustment clause I can cite. Every other Bellhaven payment in the feed carries an invoice reference; this one carries an ACH reference the vendor never issued.",
+          "Neither. The payment is not a whole multiple of the $2,350.00 monthly rate [contracts#5, bank_transactions#133]. The contract terms on file carry no premium adjustment clause [contracts#5], and the contract is still in force on the payment date [contracts#5], so a lapse does not explain it either. Every other payment to this vendor in the feed references an invoice number; this one references an ACH batch the vendor never issued [bank_transactions#133].",
         citations: [
           { table: "contracts", id: 5, field: "terms_text", reason: "The contract terms as filed, with no premium adjustment provision." },
           { table: "contracts", id: 5, field: "effective_to", reason: "The contract is in force on the payment date, so lapse does not explain it." },
+          { table: "bank_transactions", id: 133, field: "reference", reason: "The reference is an ACH batch id, not an invoice number." },
         ],
         gaps: [
           {
@@ -208,12 +239,17 @@ const SAMPLES: SampleSpec[] = [
     turns: [
       {
         role: "auditor",
-        content: "Notchwork billed twice in August. Justify NWK-2025-08B.",
+        content:
+          "Notchwork billed twice in August 2025, first NWK-2025-08 [invoices#32] and then NWK-2025-08B [invoices#33]. Justify the second one.",
+        citations: [
+          { table: "invoices", id: 32, field: "invoice_number", reason: "The first August invoice." },
+          { table: "invoices", id: 33, field: "invoice_number", reason: "The second August invoice, under examination." },
+        ],
       },
       {
         role: "accountant",
         content:
-          "I can show the paperwork but not the entitlement. Contract 3 is a $1,450.00 monthly subscription and NWK-2025-08 already covers August at that amount. NWK-2025-08B is dated 2025-08-18 for the same $1,450.00, was approved by Marcus Webb, and was paid on 2025-09-03. The contract has no clause for a second monthly charge, so unless there is an upgrade order outside the system, August was billed twice.",
+          "I can show the paperwork but not the entitlement. The contract is a $1,450.00 monthly subscription [contracts#3], and NWK-2025-08 already covers August at that amount [invoices#32]. The second invoice is dated 2025-08-18 for the same amount [invoices#33] and was approved by Marcus Webb [invoices#33]. It was paid in full on 2025-09-03 [bank_transactions#196] and expensed to Software Subscriptions a second time for the month [ledger_entries#923]. The contract provides for one monthly charge [contracts#3], so unless there is an upgrade order outside the system, August was billed twice.",
         citations: [
           { table: "contracts", id: 3, field: "monthly_rate", reason: "A single monthly charge is all the contract provides for." },
           { table: "invoices", id: 32, field: "invoice_number", reason: "The first August invoice, which already covers the month." },
@@ -239,12 +275,15 @@ const SAMPLES: SampleSpec[] = [
       {
         role: "auditor",
         content:
-          "October is the only month where Dodo Clearing does not net to zero. Explain the difference.",
+          "The October payout came to $3,558.80 [dodo_transactions#340], and October is the only month where the clearing account does not net to zero. Explain the difference.",
+        citations: [
+          { table: "dodo_transactions", id: 340, field: "amount", reason: "The payout under examination." },
+        ],
       },
       {
         role: "accountant",
         content:
-          "Payments less refunds less fees for October comes to $3,657.80, but Dodo paid out $3,558.80 and the bank confirms that amount landed on 2025-10-31. The $99.00 difference is exactly dispute dsp_7iu96cuq03kr on payment pay_8y4ow7qxour0qj, which Dodo records as lost on 2025-10-16. No ledger row carries that dispute, so the payout is right and the books are wrong: Dodo Clearing is overstated by $99.00.",
+          "The payout is right and the books are wrong. Payments less refunds less fees for October come to $3,657.80, but Dodo paid out $3,558.80 [dodo_transactions#340] and the bank received exactly that [bank_transactions#241]. The $99.00 difference is a dispute Dodo records as lost [dodo_transactions#317], raised against a payment taken earlier in the month [dodo_transactions#317]. No ledger row carries that dispute, so clearing was reduced only by the payout received [ledger_entries#1254] and is overstated by the disputed amount.",
         citations: [
           { table: "dodo_transactions", id: 340, field: "amount", reason: "The payout Dodo actually made for October." },
           { table: "bank_transactions", id: 241, field: "amount", reason: "The bank confirms the payout amount, so the shortfall is not a timing difference." },
@@ -255,8 +294,7 @@ const SAMPLES: SampleSpec[] = [
         gaps: [
           {
             kind: "payout_mismatch",
-            description:
-              "Expected payout of $3,657.80 versus actual $3,558.80 for October 2025.",
+            description: "Expected payout of $3,657.80 versus actual $3,558.80 for October 2025.",
           },
           {
             kind: "missing_ledger_entry",
@@ -272,16 +310,22 @@ const SAMPLES: SampleSpec[] = [
     turns: [
       {
         role: "auditor",
-        content: "STR-2025-09 is an $18,500.00 invoice. Who approved it?",
+        content:
+          "STR-2025-09 is an $18,500.00 invoice [invoices#9] and it was settled on 2025-09-20 [bank_transactions#209]. Who approved it?",
+        citations: [
+          { table: "invoices", id: 9, field: "amount", reason: "The invoice under examination." },
+          { table: "bank_transactions", id: 209, field: "date", reason: "The settlement the question asserts." },
+        ],
       },
       {
         role: "accountant",
         content:
-          "Nobody. approved_by is empty on this invoice, and it is the only invoice over $10,000 in the year without an approver. The pricing is correct at the contract rate and the expense is booked normally, so this is a control failure rather than a valuation error. I cannot produce an approval that does not exist.",
+          "Nobody did. The approval field on the invoice is empty [invoices#9], and this is the only invoice above the $10,000 threshold in the year without an approver [invoices#9]. The amount is at the contract rate [contracts#1], so the pricing is not in question. The expense was recognised anyway, debiting Cloud Infrastructure [ledger_entries#979] against Accounts Payable [ledger_entries#980], and the bank settled it in full [bank_transactions#209]. I cannot produce an approval that does not exist.",
         citations: [
           { table: "invoices", id: 9, field: "approved_by", reason: "The approval field is empty on an invoice above the approval threshold." },
           { table: "invoices", id: 9, field: "amount", reason: "The amount is above the $10,000 approval threshold." },
           { table: "contracts", id: 1, field: "monthly_rate", reason: "The amount is at the contract rate, so only the approval is missing." },
+          { table: "bank_transactions", id: 209, field: "amount", reason: "The unapproved invoice was paid in full." },
           { table: "ledger_entries", id: 979, field: "debit", reason: "The expense was recognised despite the missing approval." },
           { table: "ledger_entries", id: 980, field: "credit", reason: "Accounts Payable credited for the unapproved invoice." },
         ],
@@ -301,24 +345,30 @@ const SAMPLES: SampleSpec[] = [
       {
         role: "auditor",
         content:
-          "MDC-2025-12 is dated after the Meridian contract ends. On what authority was it paid?",
+          "MDC-2025-12 is dated 2025-12-01 [invoices#49], after the Meridian contract ends [contracts#4], and it was paid on 2025-12-15 [bank_transactions#287]. On what authority?",
+        citations: [
+          { table: "invoices", id: 49, field: "issue_date", reason: "The invoice under examination." },
+          { table: "contracts", id: 4, field: "effective_to", reason: "The contract term the invoice falls outside of." },
+          { table: "bank_transactions", id: 287, field: "date", reason: "The settlement the question asserts." },
+        ],
       },
       {
         role: "accountant",
         content:
-          "None that I can cite. Contract 4 runs to 2025-11-30 and there is no renewal in the contract table. The invoice is issued 2025-12-01 for $6,800.00, one day outside the term, and it was approved and booked to Contractors. The work may well have happened, but nothing on file authorises billing for December.",
+          "None that I can cite. The contract runs to 2025-11-30 [contracts#4] and there is no renewal on file. The invoice is issued 2025-12-01 for $6,800.00 [invoices#49], one day outside the term, and it was approved by Priya Natarajan [invoices#49]. It was paid in full on 2025-12-15 [bank_transactions#287] and booked to Contractors [ledger_entries#1423] against Accounts Payable [ledger_entries#1424]. The work may well have happened; the billing has no agreement behind it.",
         citations: [
           { table: "contracts", id: 4, field: "effective_to", reason: "The contract term ends the day before the invoice was issued." },
           { table: "invoices", id: 49, field: "issue_date", reason: "The invoice date falls outside the contract term." },
           { table: "invoices", id: 49, field: "amount", reason: "The amount billed outside the term." },
-          { table: "invoices", id: 49, field: "approved_by", reason: "The out-of-term invoice was approved and paid." },
+          { table: "invoices", id: 49, field: "approved_by", reason: "The out-of-term invoice was approved." },
+          { table: "bank_transactions", id: 287, field: "amount", reason: "The out-of-term invoice was also paid in full." },
           { table: "ledger_entries", id: 1423, field: "debit", reason: "Contractors expensed for a period the contract does not cover." },
+          { table: "ledger_entries", id: 1424, field: "credit", reason: "Accounts Payable credited for the out-of-term invoice." },
         ],
         gaps: [
           {
             kind: "outside_contract_term",
-            description:
-              "Invoice 49 is issued after contract 4's effective_to date with no renewal on file.",
+            description: "Invoice 49 is issued after contract 4's effective_to date with no renewal on file.",
           },
         ],
       },
@@ -331,12 +381,15 @@ const SAMPLES: SampleSpec[] = [
       {
         role: "auditor",
         content:
-          "STR-2025-01 is the largest single expense in January. Show contract authority, approval, and settlement.",
+          "STR-2025-01 is the largest single expense in January 2025 [invoices#1]. Show contract authority, approval, and settlement.",
+        citations: [
+          { table: "invoices", id: 1, field: "amount", reason: "The invoice under examination." },
+        ],
       },
       {
         role: "accountant",
         content:
-          "All three are on file. Contract 1 sets the Stratus monthly rate at $18,500.00 from 2025-01-01 through 2025-12-31, and this invoice bills exactly that on 2025-01-01. Priya Natarajan approved it. The bank settles reference STR-2025-01 once, on 2025-01-24, for the same amount, and the journal balances: Cloud Infrastructure debited on issue, Cash credited on settlement.",
+          "All three are on file. The contract sets the monthly rate at $18,500.00 from 2025-01-01 through 2025-12-31 [contracts#1], and the invoice bills exactly that on its issue date [invoices#1]. Priya Natarajan approved it [invoices#1]. The bank settled reference STR-2025-01 once, on 2025-01-24, for the same amount [bank_transactions#20]. The journal balances, with the expense debited on issue [ledger_entries#1] and Cash credited on settlement [ledger_entries#86].",
         citations: [
           { table: "contracts", id: 1, field: "monthly_rate", reason: "The contracted rate the invoice bills." },
           { table: "contracts", id: 1, field: "effective_to", reason: "The invoice date falls inside the contract term." },
@@ -346,7 +399,6 @@ const SAMPLES: SampleSpec[] = [
           { table: "ledger_entries", id: 1, field: "debit", reason: "Expense recognised on the invoice date." },
           { table: "ledger_entries", id: 86, field: "credit", reason: "Cash credited once on settlement." },
         ],
-        gaps: [],
       },
     ],
   },
@@ -356,12 +408,16 @@ const SAMPLES: SampleSpec[] = [
     turns: [
       {
         role: "auditor",
-        content: "August rent, $9,200.00. Prove it.",
+        content:
+          "August rent came to $9,200.00 [invoices#20]. Prove it was owed and that it was paid once.",
+        citations: [
+          { table: "invoices", id: 20, field: "amount", reason: "The invoice under examination." },
+        ],
       },
       {
         role: "accountant",
         content:
-          "Contract 2 fixes Harbor Point rent at $9,200.00 a month through 2025-12-31, and HPP-2025-08 bills exactly that on 2025-08-01 with Elena Fischer's approval. The bank settles it once on 2025-08-10 and the journal balances: Rent debited on issue, Cash credited on settlement, same amount both sides.",
+          "The contract fixes rent at $9,200.00 a month through 2025-12-31 [contracts#2], and HPP-2025-08 bills exactly that on 2025-08-01 [invoices#20]. Elena Fischer approved it [invoices#20]. The bank settled it once, on 2025-08-10 [bank_transactions#175]. Rent was debited on issue [ledger_entries#837] and Cash credited on settlement [ledger_entries#886], the same amount on both sides.",
         citations: [
           { table: "contracts", id: 2, field: "monthly_rate", reason: "The contracted rent amount." },
           { table: "invoices", id: 20, field: "amount", reason: "The invoice bills the contract rate." },
@@ -370,7 +426,6 @@ const SAMPLES: SampleSpec[] = [
           { table: "ledger_entries", id: 837, field: "debit", reason: "Rent expense recognised on the invoice date." },
           { table: "ledger_entries", id: 886, field: "credit", reason: "Cash credited on settlement." },
         ],
-        gaps: [],
       },
     ],
   },
@@ -381,21 +436,25 @@ const SAMPLES: SampleSpec[] = [
       {
         role: "auditor",
         content:
-          "Meridian's contract expires this year. Confirm MDC-2025-04 falls inside the term and was paid once.",
+          "The Meridian contract expires before the year ends [contracts#4]. Confirm MDC-2025-04 is inside the term, approved, and paid once [invoices#41].",
+        citations: [
+          { table: "contracts", id: 4, field: "effective_to", reason: "The contract term the invoice is tested against." },
+          { table: "invoices", id: 41, field: "invoice_number", reason: "The invoice under examination." },
+        ],
       },
       {
         role: "accountant",
         content:
-          "It does. Contract 4 runs 2025-01-01 to 2025-11-30, so an issue date of 2025-04-01 is comfortably inside the term, and the $6,800.00 billed equals the contract monthly rate. Priya Natarajan approved it, the bank settles it once on 2025-04-18, and the debit and credit match.",
+          "It is all three. The contract runs 2025-01-01 to 2025-11-30 [contracts#4], so an issue date of 2025-04-01 is inside the term [invoices#41]. The $6,800.00 billed equals the contract monthly rate [contracts#4]. Priya Natarajan approved it [invoices#41]. The bank settled it once, on 2025-04-18 [bank_transactions#91], and the debit and credit match [ledger_entries#351, #412].",
         citations: [
           { table: "contracts", id: 4, field: "effective_from", reason: "The contract is in force before the invoice date." },
           { table: "contracts", id: 4, field: "effective_to", reason: "The contract is still in force on the invoice date." },
           { table: "invoices", id: 41, field: "amount", reason: "The invoice bills the contract monthly rate." },
+          { table: "invoices", id: 41, field: "approved_by", reason: "The invoice carries a named approver." },
           { table: "bank_transactions", id: 91, field: "amount", reason: "A single settlement for the full amount." },
           { table: "ledger_entries", id: 351, field: "debit", reason: "Contractors expense recognised on the invoice date." },
           { table: "ledger_entries", id: 412, field: "credit", reason: "Cash credited once on settlement." },
         ],
-        gaps: [],
       },
     ],
   },
@@ -405,20 +464,23 @@ const SAMPLES: SampleSpec[] = [
     turns: [
       {
         role: "auditor",
-        content: "Bank row 20, $18,500.00 out on 2025-01-24. Tie it to a document.",
+        content:
+          "A payment of $18,500.00 left the account on 2025-01-24 [bank_transactions#20]. Tie it to a document.",
+        citations: [
+          { table: "bank_transactions", id: 20, field: "amount", reason: "The payment under examination." },
+        ],
       },
       {
         role: "accountant",
         content:
-          "The reference on the payment is the invoice number: STR-2025-01, invoice 1 from Stratus Compute Inc. for the same $18,500.00, approved by Priya Natarajan. The payment clears the payable rather than creating an expense, so Accounts Payable is debited and Cash credited on the same date.",
+          "The reference on the payment is the invoice number it settles [bank_transactions#20]. That invoice is STR-2025-01 [invoices#1], for the same $18,500.00 [invoices#1], approved by Priya Natarajan [invoices#1]. The payment clears the payable rather than creating an expense, so Accounts Payable is debited [ledger_entries#85] and Cash credited [ledger_entries#86] on the same date.",
         citations: [
           { table: "bank_transactions", id: 20, field: "reference", reason: "The payment reference is the invoice number it settles." },
-          { table: "bank_transactions", id: 20, field: "amount", reason: "The payment equals the invoice amount exactly." },
           { table: "invoices", id: 1, field: "invoice_number", reason: "The invoice named by the payment reference." },
+          { table: "invoices", id: 1, field: "amount", reason: "The invoice amount equals the payment exactly." },
           { table: "ledger_entries", id: 85, field: "debit", reason: "Accounts Payable cleared by the payment." },
           { table: "ledger_entries", id: 86, field: "credit", reason: "Cash credited once for the payment." },
         ],
-        gaps: [],
       },
     ],
   },
@@ -428,12 +490,16 @@ const SAMPLES: SampleSpec[] = [
     turns: [
       {
         role: "auditor",
-        content: "Reconcile the March Dodo payout to the bank and the clearing account.",
+        content:
+          "Reconcile the March payout to the bank and to the clearing account [dodo_transactions#81].",
+        citations: [
+          { table: "dodo_transactions", id: 81, field: "reference", reason: "The payout under examination." },
+        ],
       },
       {
         role: "accountant",
         content:
-          "March reconciles exactly. Dodo paid out $3,051.84 on 2025-03-31 and the bank shows the same amount landing the same day. The month's processing fees of $144.16 are booked to Payment Processing Fees against Dodo Clearing, and the payout clears the remaining balance: Cash debited, Dodo Clearing credited, same figure. The clearing account nets to zero for the month.",
+          "March reconciles exactly. Dodo paid out $3,051.84 on 2025-03-31 [dodo_transactions#81] and the bank received the same amount that day [bank_transactions#75]. The month's processing fees of $144.16 are booked against clearing [ledger_entries#343]. The payout then clears the balance, with Cash debited [ledger_entries#335] and Dodo Clearing credited [ledger_entries#336] for the same figure.",
         citations: [
           { table: "dodo_transactions", id: 81, field: "amount", reason: "The payout amount Dodo reports." },
           { table: "bank_transactions", id: 75, field: "amount", reason: "The bank received the payout amount unchanged." },
@@ -441,37 +507,54 @@ const SAMPLES: SampleSpec[] = [
           { table: "ledger_entries", id: 335, field: "debit", reason: "Cash debited for the payout." },
           { table: "ledger_entries", id: 336, field: "credit", reason: "Dodo Clearing credited so the month nets to zero." },
         ],
-        gaps: [],
       },
     ],
   },
 ];
 
-type Row = Record<string, string>;
-type Tables = Record<TableName, Map<number, Row>>;
+/** The sample ids this run contains, for server-side validation of decisions. */
+export function mockSampleIds(): Set<string> {
+  return new Set(SAMPLES.map((s) => formatSampleId(s.ref)));
+}
 
-export async function buildMockRun(runId: string): Promise<RunView> {
+type Row = Record<string, string>;
+export type Tables = Record<TableName, Map<number, Row>>;
+
+export async function buildMockRun(runId: string = MOCK_RUN_ID): Promise<RunView> {
   const tables = await loadRows();
   const samples = SAMPLES.map((spec) => buildSample(spec, tables));
-  return { id: runId, name: "Northwind Labs FY2025 — walkthrough sample", samples };
+  return {
+    id: runId,
+    name: "Northwind Labs FY2025 — walkthrough sample",
+    kind: "mock",
+    samples,
+  };
+}
+
+/** The resolved bundle for one turn, used by the citation check as well as the UI. */
+export function turnBundle(spec: SampleSpec, turn: TurnSpec, tables: Tables): EvidenceBundle {
+  return {
+    sample: spec.ref,
+    citations: turn.citations.map((c) => resolve(c, tables)),
+    gaps: turn.gaps ?? [],
+  };
+}
+
+export async function loadMockTables(): Promise<Tables> {
+  return loadRows();
 }
 
 function buildSample(spec: SampleSpec, tables: Tables): SampleView {
   const id = formatSampleId(spec.ref);
   const source = sourceRow(spec.ref, tables);
   const thread: MessageView[] = spec.turns.map((turn, i) => {
-    if (turn.role === "auditor") return { turn: i + 1, role: "auditor", content: turn.content };
-    return {
-      turn: i + 1,
-      role: "accountant",
-      content: turn.content,
-      evidence: {
-        sample: spec.ref,
-        citations: turn.citations.map((c) => resolve(c, tables)),
-        gaps: turn.gaps,
-        defense: turn.content,
-      },
-    };
+    const message: MessageView = { turn: i + 1, role: turn.role, content: turn.content };
+    // Only accountant turns carry evidence, matching how the auditor persists
+    // real exchanges: its questions cite inline and leave the column null.
+    if (turn.role === "accountant") {
+      message.evidence = { ...turnBundle(spec, turn, tables), defense: turn.content };
+    }
+    return message;
   });
   return {
     id,
@@ -487,24 +570,17 @@ function buildSample(spec: SampleSpec, tables: Tables): SampleView {
 function label(ref: SampleRef, source: Row, tables: Tables): string {
   if (ref.type === "invoice") {
     const vendor = tables.vendors.get(Number(source.vendor_id));
-    return `${vendor?.name ?? "Unknown vendor"} · ${source.invoice_number}`;
+    return invoiceLabel(vendor?.name ?? `vendor #${source.vendor_id}`, source.invoice_number);
   }
-  if (ref.type === "bank_transaction") {
-    return `${source.counterparty} · ${source.reference}`;
-  }
-  // Refund and dispute references carry a trailing "for pay_..." clause.
-  return `Dodo ${source.type} · ${source.reference.split(" ")[0]}`;
+  if (ref.type === "bank_transaction") return bankLabel(source.counterparty, source.reference);
+  return dodoLabel(source.type, source.reference);
 }
 
 function sourceRow(ref: SampleRef, tables: Tables): Row {
-  const table: TableName =
-    ref.type === "invoice"
-      ? "invoices"
-      : ref.type === "bank_transaction"
-        ? "bank_transactions"
-        : "dodo_transactions";
-  const row = tables[table].get(ref.id);
-  if (!row) throw new Error(`Mock run references ${table} row ${ref.id}, which is not in the database.`);
+  const row = tables[sourceTable(ref)].get(ref.id);
+  if (!row) {
+    throw new Error(`Mock run references ${sourceTable(ref)} row ${ref.id}, which is not in the database.`);
+  }
   return row;
 }
 
@@ -533,7 +609,6 @@ function idsFor(table: TableName): number[] {
   for (const sample of SAMPLES) {
     if (sourceTable(sample.ref) === table) ids.add(sample.ref.id);
     for (const turn of sample.turns) {
-      if (turn.role !== "accountant") continue;
       for (const c of turn.citations) if (c.table === table) ids.add(c.id);
     }
   }
@@ -562,24 +637,18 @@ async function loadRows(): Promise<Tables> {
       ? db.select().from(schema.contracts).where(inArray(schema.contracts.id, contractIds))
       : [],
     bankIds.length
-      ? db
-          .select()
-          .from(schema.bankTransactions)
-          .where(inArray(schema.bankTransactions.id, bankIds))
+      ? db.select().from(schema.bankTransactions).where(inArray(schema.bankTransactions.id, bankIds))
       : [],
     dodoIds.length
-      ? db
-          .select()
-          .from(schema.dodoTransactions)
-          .where(inArray(schema.dodoTransactions.id, dodoIds))
+      ? db.select().from(schema.dodoTransactions).where(inArray(schema.dodoTransactions.id, dodoIds))
       : [],
     ledgerIds.length
       ? db.select().from(schema.ledgerEntries).where(inArray(schema.ledgerEntries.id, ledgerIds))
       : [],
   ]);
 
-  // Invoice rows carry the vendor id, so the vendor set is only known after the
-  // invoices are loaded.
+  // Invoice rows carry the vendor id, so the vendor set is only fully known
+  // after the invoices are loaded.
   const wantedVendors = new Set<number>(vendorIds);
   for (const inv of invoices) wantedVendors.add(inv.vendorId);
   const vendors = wantedVendors.size

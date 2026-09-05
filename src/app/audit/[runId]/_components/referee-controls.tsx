@@ -1,8 +1,10 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { approve, concede, redirect } from "@/lib/referee/actions";
+import { approve, concede, redirect, type DecisionResult } from "@/lib/referee/actions";
 import type { SampleType } from "@/lib/referee/evidence-types";
+
+const GENERIC_FAILURE = "The decision could not be recorded. Try again.";
 
 export function RefereeControls({
   runId,
@@ -20,15 +22,22 @@ export function RefereeControls({
 
   const input = { runId, sampleType, sampleId };
 
-  function run(action: () => Promise<void>) {
+  // Actions answer with a result. A rejected decision carries a message
+  // written for the referee; a thrown one means the action itself broke, and
+  // whatever it says is server detail the referee should not be reading.
+  function run(action: () => Promise<DecisionResult>) {
     setError(null);
     startTransition(async () => {
       try {
-        await action();
+        const result = await action();
+        if (!result.ok) {
+          setError(result.message);
+          return;
+        }
         setShowNote(false);
         setNote("");
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "The decision could not be recorded.");
+      } catch {
+        setError(GENERIC_FAILURE);
       }
     });
   }

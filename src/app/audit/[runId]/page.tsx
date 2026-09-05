@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { coverage, getRun, parseSampleId, type RunView } from "@/lib/referee/data";
+import { coverage, getRun, parseSampleId, runVersion, type RunView } from "@/lib/referee/data";
 import { CoverageRing } from "./_components/coverage-ring";
 import { ExchangePanes } from "./_components/exchange-panes";
 import { RefereeControls } from "./_components/referee-controls";
@@ -17,12 +17,18 @@ export default async function AuditRunPage({
   const { runId } = await params;
   const { s } = await searchParams;
 
-  let run: RunView;
+  let run: RunView | null;
   try {
     run = await getRun(runId);
   } catch (error) {
-    return <RunUnavailable runId={runId} error={error} />;
+    // The reason belongs in the server log, not on the referee's screen: it
+    // carries table names, connection details, and whatever the driver felt
+    // like including.
+    console.error("[referee] loading run failed", { runId, error });
+    return <RunUnavailable runId={runId} />;
   }
+
+  if (!run) return <RunNotFound runId={runId} />;
 
   const selected = run.samples.find((sample) => sample.id === s) ?? run.samples[0];
   const ref = selected ? parseSampleId(selected.id) : null;
@@ -61,6 +67,7 @@ export default async function AuditRunPage({
             key={`${selected.id}:${selected.status}:${selected.thread.length}`}
             runId={run.id}
             sample={selected}
+            runVersion={runVersion(run)}
           />
         ) : (
           <div className="col-span-2 grid place-items-center text-sm text-neutral-500">
@@ -72,19 +79,42 @@ export default async function AuditRunPage({
   );
 }
 
-function RunUnavailable({ runId, error }: { runId: string; error: unknown }) {
-  const message = error instanceof Error ? error.message : String(error);
+function RunNotFound({ runId }: { runId: string }) {
+  return (
+    <Shell title={`There is no audit run ${runId}`}>
+      <p className="mt-2 text-sm text-neutral-400">
+        Run the auditor with <code className="font-mono">pnpm auditor:run</code> to create one, or
+        open the walkthrough at{" "}
+        <Link className="underline" href="/audit/mock">
+          /audit/mock
+        </Link>
+        .
+      </p>
+    </Shell>
+  );
+}
+
+function RunUnavailable({ runId }: { runId: string }) {
+  return (
+    <Shell title={`Run ${runId} could not be loaded`}>
+      <p className="mt-2 text-sm text-neutral-400">
+        Something went wrong reading the run. The details are in the server log.
+      </p>
+      <p className="mt-2 text-sm text-neutral-400">
+        If this is a fresh checkout, the tables may not be there yet: run{" "}
+        <code className="font-mono">pnpm db:push</code> and{" "}
+        <code className="font-mono">pnpm seed</code>, then reload.
+      </p>
+    </Shell>
+  );
+}
+
+function Shell({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <main className="mx-auto max-w-2xl p-8 text-neutral-200">
-      <h1 className="text-lg font-medium">Run {runId} could not be loaded</h1>
-      <p className="mt-2 text-sm text-neutral-400">
-        The run is built from the seeded tables. Run <code className="font-mono">pnpm db:push</code>{" "}
-        and <code className="font-mono">pnpm seed</code>, then reload.
-      </p>
-      <pre className="mt-4 overflow-x-auto rounded border border-neutral-800 bg-neutral-900/50 p-3 font-mono text-xs text-neutral-400">
-        {message}
-      </pre>
-      <p className="mt-4 text-sm">
+      <h1 className="text-lg font-medium">{title}</h1>
+      {children}
+      <p className="mt-6 text-sm">
         <Link className="underline" href="/">
           Back to the index
         </Link>

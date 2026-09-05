@@ -1,59 +1,34 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { db, schema } from "@/db";
-import type { SampleRef } from "./evidence-types";
-import { isSampleType } from "./sample-id";
-import { ensureHydrated, record, type DecisionKind } from "./decisions";
+import { normaliseNote, recordDecision, type DecisionInput, type DecisionResult } from "./decide";
 
-export type DecisionInput = {
-  runId: string;
-  sampleType: string;
-  sampleId: number;
-};
+export type { DecisionInput, DecisionResult } from "./decide";
 
-export async function approve(input: DecisionInput): Promise<void> {
-  await decide(input, "approve", null);
+export async function approve(input: DecisionInput): Promise<DecisionResult> {
+  return run(input, "approve", null);
 }
 
-export async function redirect(input: DecisionInput, note: string): Promise<void> {
-  const trimmed = note.trim();
-  if (trimmed.length === 0) throw new Error("A redirect needs a note telling the accountant where to look.");
-  await decide(input, "redirect", trimmed.slice(0, 500));
-}
-
-export async function concede(input: DecisionInput): Promise<void> {
-  await decide(input, "concede", null);
-}
-
-async function decide(
-  input: DecisionInput,
-  decision: DecisionKind,
-  note: string | null,
-): Promise<void> {
-  const ref = validate(input);
-  // Hydrate before the insert so the cache does not read its own new row back
-  // and count the decision twice.
-  await ensureHydrated(input.runId);
-  const [row] = await db
-    .insert(schema.refereeDecisions)
-    .values({
-      runId: input.runId,
-      sampleType: ref.type,
-      sampleId: ref.id,
-      decision,
-      note,
-    })
-    .returning({ createdAt: schema.refereeDecisions.createdAt });
-  record(input.runId, ref, { decision, note, at: row.createdAt });
-  revalidatePath(`/audit/${input.runId}`);
-}
-
-function validate(input: DecisionInput): SampleRef {
-  if (!input.runId) throw new Error("Missing run id.");
-  if (!isSampleType(input.sampleType)) throw new Error(`Unknown sample type ${input.sampleType}.`);
-  if (!Number.isInteger(input.sampleId) || input.sampleId <= 0) {
-    throw new Error(`Invalid sample id ${input.sampleId}.`);
+export async function redirect(input: DecisionInput, note: string): Promise<DecisionResult> {
+  const trimmed = normaliseNote(note);
+  if (!trimmed) {
+    return { ok: false, message: "A redirect needs a note telling the accountant where to look." };
   }
-  return { type: input.sampleType, id: input.sampleId };
+  return run(input, "redirect", trimmed);
+}
+
+export async function concede(input: DecisionInput): Promise<DecisionResult> {
+  return run(input, "concede", null);
+}
+
+async function run(
+  input: DecisionInput,
+  decision: "approve" | "redirect" | "concede",
+  note: string | null,
+): Promise<DecisionResult> {
+  const result = await recordDecision(input, decision, note);
+  // Revalidating the run key rather than the requested path keeps a decision
+  // reached through an alias of the mock run from invalidating some other page.
+  if (result.ok) revalidatePath(`/audit/${result.runKey}`);
+  return result;
 }

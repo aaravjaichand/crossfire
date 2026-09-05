@@ -11,66 +11,34 @@ export type StoredDecision = {
   at: Date;
 };
 
-// Status overrides live in memory, keyed by run id then sample id, so the mock
-// run reflects referee actions without adding columns to Worker B's tables.
-// The map is a write-through cache of referee_decisions: it is filled from the
-// table the first time a run is read, then appended to on every action, so a
-// server restart does not lose decisions that are already persisted.
-type RunOverrides = Map<string, StoredDecision[]>;
+const DECISION_KINDS = new Set<string>(["approve", "redirect", "concede"]);
 
-const globalForReferee = globalThis as unknown as {
-  __crossfireRefereeOverrides?: Map<string, RunOverrides>;
-  __crossfireRefereeHydration?: Map<string, Promise<void>>;
-};
-
-const overrides = (globalForReferee.__crossfireRefereeOverrides ??= new Map());
-const hydration = (globalForReferee.__crossfireRefereeHydration ??= new Map());
-
-export async function ensureHydrated(runId: string): Promise<RunOverrides> {
-  let pending = hydration.get(runId);
-  if (!pending) {
-    pending = hydrate(runId);
-    hydration.set(runId, pending);
-  }
-  await pending;
-  return overrides.get(runId) ?? new Map();
-}
-
-async function hydrate(runId: string): Promise<void> {
-  const run: RunOverrides = new Map();
-  overrides.set(runId, run);
+/**
+ * Reads referee_decisions for a run on every call. There is deliberately no
+ * process-local cache: the app runs on serverless instances that do not share
+ * memory, and the thread polls, so a cached override would let one instance
+ * serve a status the database has already moved past.
+ */
+export async function loadDecisions(runId: string): Promise<Map<string, StoredDecision[]>> {
   const rows = await db
     .select()
     .from(schema.refereeDecisions)
     .where(eq(schema.refereeDecisions.runId, runId))
     .orderBy(asc(schema.refereeDecisions.id));
+
+  const bySample = new Map<string, StoredDecision[]>();
   for (const row of rows) {
-    if (!isSampleType(row.sampleType)) continue;
+    if (!isSampleType(row.sampleType) || !DECISION_KINDS.has(row.decision)) continue;
     const ref: SampleRef = { type: row.sampleType, id: row.sampleId };
-    push(run, formatSampleId(ref), {
+    const key = formatSampleId(ref);
+    const decision: StoredDecision = {
       decision: row.decision as DecisionKind,
       note: row.note,
       at: row.createdAt,
-    });
+    };
+    const list = bySample.get(key);
+    if (list) list.push(decision);
+    else bySample.set(key, [decision]);
   }
-}
-
-export async function getDecisions(runId: string): Promise<RunOverrides> {
-  return ensureHydrated(runId);
-}
-
-export function record(
-  runId: string,
-  ref: SampleRef,
-  decision: StoredDecision,
-): void {
-  const run = overrides.get(runId) ?? new Map<string, StoredDecision[]>();
-  overrides.set(runId, run);
-  push(run, formatSampleId(ref), decision);
-}
-
-function push(run: RunOverrides, sampleId: string, decision: StoredDecision): void {
-  const list = run.get(sampleId);
-  if (list) list.push(decision);
-  else run.set(sampleId, [decision]);
+  return bySample;
 }
