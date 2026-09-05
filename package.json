@@ -12,7 +12,13 @@
     "seed": "tsx scripts/seed.ts",
     "seed:check": "tsx scripts/seed-check.ts",
     "accountant": "tsx scripts/accountant.ts",
-    "test:accountant": "tsx scripts/test-accountant.ts"
+    "test:accountant": "tsx scripts/test-accountant.ts",
+    "auditor:run": "tsx scripts/auditor-run.ts",
+    "auditor:check-policy": "tsx src/lib/auditor/policy.check.ts",
+    "auditor:check-citation": "tsx src/lib/auditor/citation.check.ts",
+    "auditor:check-sampler": "tsx src/lib/auditor/sampler.check.ts",
+    "auditor:check-persist": "tsx src/lib/auditor/persist.check.ts",
+    "auditor:check": "pnpm auditor:check-policy && pnpm auditor:check-citation && pnpm auditor:check-sampler && pnpm auditor:check-persist"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.2",

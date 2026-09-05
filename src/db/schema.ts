@@ -1,13 +1,16 @@
 import {
   date,
   integer,
+  jsonb,
   numeric,
   pgEnum,
   pgTable,
+  real,
   serial,
   text,
   timestamp,
 } from "drizzle-orm/pg-core";
+import type { EvidenceBundle } from "@/lib/accountant/types";
 
 // Money is numeric(12,2), dates are `date`, ids are serial integers.
 const money = (name: string) => numeric(name, { precision: 12, scale: 2 });
@@ -87,17 +90,48 @@ export const ledgerEntries = pgTable("ledger_entries", {
   sourceId: integer("source_id"),
 });
 
-// Placeholder tables. Other workers add columns later.
+// One row per sample drawn into an audit run by the auditor agent.
+// sample_type + sample_id identify the underlying row (bank_transactions,
+// invoices, or dodo_transactions); there is no FK since the target table
+// varies.
 export const auditSamples = pgTable("audit_samples", {
   id: serial("id").primaryKey(),
+  runId: integer("run_id")
+    .notNull()
+    .references(() => auditRuns.id),
+  // bank_transaction | invoice | dodo_transaction
+  sampleType: text("sample_type").notNull(),
+  sampleId: integer("sample_id").notNull(),
+  amount: money("amount").notNull(),
+  riskScore: real("risk_score").notNull(),
+  riskReasons: jsonb("risk_reasons").notNull().$type<string[]>(),
+  // open | defended | gap | conceded
+  status: text("status").notNull().default("open"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+// One row per turn in the auditor/accountant/referee conversation for a
+// sample. role="accountant" turns carry an EvidenceBundle in `evidence`.
 export const auditExchanges = pgTable("audit_exchanges", {
   id: serial("id").primaryKey(),
+  runId: integer("run_id")
+    .notNull()
+    .references(() => auditRuns.id),
+  sampleId: integer("sample_id")
+    .notNull()
+    .references(() => auditSamples.id),
+  turn: integer("turn").notNull(),
+  // auditor | accountant
+  role: text("role").notNull(),
+  questionTemplateId: text("question_template_id"),
+  content: text("content").notNull(),
+  // Set when role = accountant. EvidenceBundle is the canonical type from
+  // src/lib/accountant/types.ts.
+  evidence: jsonb("evidence").$type<EvidenceBundle>(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+// Placeholder table. Worker C adds columns later.
 export const refereeDecisions = pgTable("referee_decisions", {
   id: serial("id").primaryKey(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -106,4 +140,15 @@ export const refereeDecisions = pgTable("referee_decisions", {
 export const learnedRules = pgTable("learned_rules", {
   id: serial("id").primaryKey(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// One row per auditor CLI/app run. Appended here per Worker B's ownership.
+export const auditRuns = pgTable("audit_runs", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  // running | complete
+  status: text("status").notNull(),
+  sampleCount: integer("sample_count").notNull(),
+  notes: text("notes"),
 });
