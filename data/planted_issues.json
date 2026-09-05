@@ -1,0 +1,279 @@
+{
+  "company": "Northwind Labs, Inc.",
+  "fiscal_year": 2025,
+  "seed": 20250906,
+  "note": "Exactly 10 planted issues, each on a distinct record. Everything else reconciles. Do not edit by hand; regenerate with `pnpm seed`.",
+  "issues": [
+    {
+      "id": 1,
+      "slug": "invoice-paid-twice",
+      "description": "Invoice HPP-2025-03 (Harbor Point Properties LLC) was settled twice in the bank feed, three days apart. Both payments are booked in the ledger.",
+      "records": {
+        "invoices": {
+          "ids": [
+            15
+          ],
+          "invoice_number": "HPP-2025-03"
+        },
+        "bank_transactions": {
+          "ids": [
+            72,
+            73
+          ],
+          "references": [
+            "HPP-2025-03",
+            "HPP-2025-03"
+          ],
+          "dates": [
+            "2025-03-24",
+            "2025-03-27"
+          ]
+        },
+        "ledger_entries": {
+          "ids": [
+            313,
+            314,
+            325,
+            326
+          ]
+        }
+      },
+      "amounts": {
+        "invoice": "$9,200.00",
+        "each_payment": "$9,200.00",
+        "overpaid": "$9,200.00"
+      }
+    },
+    {
+      "id": 2,
+      "slug": "invoice-above-contract-rate",
+      "description": "Invoice STR-2025-05 bills 15% above the contract monthly rate. It was approved and paid at the billed amount.",
+      "records": {
+        "invoices": {
+          "ids": [
+            5
+          ],
+          "invoice_number": "STR-2025-05"
+        },
+        "contracts": {
+          "ids": [
+            1
+          ]
+        },
+        "bank_transactions": {
+          "ids": [
+            109
+          ]
+        }
+      },
+      "amounts": {
+        "contract_rate": "$18,500.00",
+        "invoice": "$21,275.00",
+        "overbilled_by": "$2,775.00"
+      }
+    },
+    {
+      "id": 3,
+      "slug": "bank-payment-without-invoice",
+      "description": "Bank payment ACH-20250620-BHI to Bellhaven Insurance Group on 2025-06-20 has no invoice behind it. It was booked to Accounts Payable anyway.",
+      "records": {
+        "bank_transactions": {
+          "ids": [
+            133
+          ],
+          "reference": "ACH-20250620-BHI",
+          "counterparty": "Bellhaven Insurance Group",
+          "date": "2025-06-20"
+        },
+        "vendors": {
+          "ids": [
+            5
+          ]
+        },
+        "ledger_entries": {
+          "ids": [
+            653,
+            654
+          ]
+        }
+      },
+      "amounts": {
+        "payment": "$3,120.00"
+      }
+    },
+    {
+      "id": 4,
+      "slug": "large-invoice-not-approved",
+      "description": "Invoice STR-2025-09 is over $10,000 and has approved_by null. Every other invoice carries an approver.",
+      "records": {
+        "invoices": {
+          "ids": [
+            9
+          ],
+          "invoice_number": "STR-2025-09",
+          "approved_by": null
+        }
+      },
+      "amounts": {
+        "invoice": "$18,500.00"
+      }
+    },
+    {
+      "id": 5,
+      "slug": "dodo-refund-missing-from-ledger",
+      "description": "Dodo refund ref_nx3ulzfvg9d7 on 2025-04-12 has no ledger entry. The April payout correctly deducts it, so Dodo Clearing is left over-stated by the refund amount for that month.",
+      "records": {
+        "dodo_transactions": {
+          "ids": [
+            92
+          ],
+          "reference": "ref_nx3ulzfvg9d7 for pay_v5wed4ozzxvkyo",
+          "type": "refund",
+          "date": "2025-04-12",
+          "customer_id": "cus_o8hghypip0"
+        },
+        "ledger_entries": {
+          "expected_source": {
+            "source_type": "dodo",
+            "source_id": 92
+          },
+          "found": []
+        }
+      },
+      "amounts": {
+        "refund": "$499.00"
+      }
+    },
+    {
+      "id": 6,
+      "slug": "dodo-payout-short-by-unrecorded-dispute",
+      "description": "The October Dodo payout po_202510_vy70ms is short by a lost dispute that was never recorded in the ledger. payments - refunds - fees for the month does not equal the payout; the difference is exactly the dispute amount.",
+      "records": {
+        "dodo_transactions": {
+          "payout_id": 340,
+          "payout_reference": "po_202510_vy70ms",
+          "dispute_id": 317,
+          "dispute_reference": "dsp_7iu96cuq03kr for pay_8y4ow7qxour0qj (lost)",
+          "disputed_payment_reference": "pay_8y4ow7qxour0qj",
+          "month": 10
+        },
+        "bank_transactions": {
+          "ids": [
+            241
+          ]
+        },
+        "ledger_entries": {
+          "expected_source": {
+            "source_type": "dodo",
+            "source_id": 317
+          },
+          "found": []
+        }
+      },
+      "amounts": {
+        "payments": "$3,930.00",
+        "refunds": "$99.00",
+        "fees": "$173.20",
+        "expected_payout": "$3,657.80",
+        "actual_payout": "$3,558.80",
+        "dispute": "$99.00"
+      }
+    },
+    {
+      "id": 7,
+      "slug": "invoice-after-contract-end",
+      "description": "Invoice MDC-2025-12 is dated 2025-12-01, after its contract ended on 2025-11-30. It was approved and paid.",
+      "records": {
+        "invoices": {
+          "ids": [
+            49
+          ],
+          "invoice_number": "MDC-2025-12",
+          "issue_date": "2025-12-01"
+        },
+        "contracts": {
+          "ids": [
+            4
+          ],
+          "effective_to": "2025-11-30"
+        }
+      },
+      "amounts": {
+        "invoice": "$6,800.00"
+      }
+    },
+    {
+      "id": 8,
+      "slug": "ledger-entry-without-bank-transaction",
+      "description": "Ledger entry \"Conference sponsorship, DevSummit 2025, paid by wire\" on 2025-08-14 credits Cash with no matching bank transaction on any date.",
+      "records": {
+        "ledger_entries": {
+          "ids": [
+            907,
+            908
+          ],
+          "source_type": "adjustment",
+          "date": "2025-08-14",
+          "memo": "Conference sponsorship, DevSummit 2025, paid by wire"
+        },
+        "bank_transactions": {
+          "found": []
+        }
+      },
+      "amounts": {
+        "entry": "$1,875.00"
+      }
+    },
+    {
+      "id": 9,
+      "slug": "bank-payment-to-unknown-counterparty",
+      "description": "Bank wire WIRE-20250912-4471 on 2025-09-12 to \"Kestrel Holdings Ltd\" is over $5,000 and the counterparty is not a vendor, payroll, or Dodo. It was booked to Consulting Expense.",
+      "records": {
+        "bank_transactions": {
+          "ids": [
+            202
+          ],
+          "reference": "WIRE-20250912-4471",
+          "counterparty": "Kestrel Holdings Ltd",
+          "date": "2025-09-12"
+        },
+        "ledger_entries": {
+          "ids": [
+            1025,
+            1026
+          ]
+        }
+      },
+      "amounts": {
+        "payment": "$7,850.00"
+      }
+    },
+    {
+      "id": 10,
+      "slug": "two-invoices-same-vendor-same-month",
+      "description": "Notchwork SaaS Ltd. issued two invoices in August 2025 for a monthly service: NWK-2025-08 and NWK-2025-08B. Both were approved and paid. The planted record is the second one.",
+      "records": {
+        "invoices": {
+          "ids": [
+            33
+          ],
+          "invoice_number": "NWK-2025-08B",
+          "issue_date": "2025-08-18",
+          "sibling_invoice": {
+            "id": 32,
+            "invoice_number": "NWK-2025-08"
+          }
+        },
+        "bank_transactions": {
+          "ids": [
+            196
+          ]
+        }
+      },
+      "amounts": {
+        "each_invoice": "$1,450.00",
+        "double_billed": "$1,450.00"
+      }
+    }
+  ]
+}
