@@ -9,7 +9,7 @@ import { inArray } from "drizzle-orm";
 import { db, schema } from "@/db";
 import type { SampleType } from "./evidence-types";
 import { Rng, weightedSampleIndices } from "./rng";
-import { isMonthEnd, toCents, usd } from "./util";
+import { isMonthEnd, toCents, usd, yearOf } from "./util";
 
 export type SampleCandidate = {
   sampleType: SampleType;
@@ -46,6 +46,19 @@ function percentileRank(sortedAbs: number[], value: number): number {
   return lo / sortedAbs.length;
 }
 
+/**
+ * Human-facing "top N%" label for a percentile rank. `pct` is the fraction
+ * of the table at or below this value, so `1 - pct` is the fraction above
+ * it; the single largest value in the table has `pct === 1`, which would
+ * otherwise print the misleading "top 0%" (reads as "beats nothing" when it
+ * actually means "nothing in the table is bigger"). Clamped to at least 1.
+ */
+export function percentileLabel(pct: number): number {
+  // Subtract a tiny epsilon before ceiling so float noise (e.g. 1 - 0.85 =
+  // 0.15000000000000002) doesn't push an exact boundary up by one percent.
+  return Math.max(1, Math.ceil((1 - pct) * 100 - 1e-9));
+}
+
 function roundNumberReason(absCents: number): { score: number; reason: string } | null {
   if (absCents > 0 && absCents % 100_000 === 0) {
     return { score: WEIGHTS.roundThousand, reason: `round number: multiple of $1,000 (${usd(absCents)})` };
@@ -56,8 +69,14 @@ function roundNumberReason(absCents: number): { score: number; reason: string } 
   return null;
 }
 
-/** First-seen date per key, using stable (date, id) ordering so ties are deterministic. */
-function firstSeenDates<T extends { id: number }>(
+/**
+ * First-seen date per (calendar year, key), using stable (date, id)
+ * ordering so ties are deterministic. Scoped by year so "new counterparty"
+ * means new *this year*, not merely new since the start of the table (a
+ * vendor who last paid in a prior year should still flag as new in the
+ * current one).
+ */
+export function firstSeenDatesByYear<T extends { id: number }>(
   rows: T[],
   dateOf: (row: T) => string,
   keyOf: (row: T) => string | null,
@@ -70,9 +89,16 @@ function firstSeenDates<T extends { id: number }>(
   const firstSeen = new Map<string, string>();
   for (const row of sorted) {
     const key = keyOf(row);
-    if (key !== null && !firstSeen.has(key)) firstSeen.set(key, dateOf(row));
+    if (key === null) continue;
+    const yearKey = `${yearOf(dateOf(row))}:${key}`;
+    if (!firstSeen.has(yearKey)) firstSeen.set(yearKey, dateOf(row));
   }
   return firstSeen;
+}
+
+/** Composite (year, key) lookup key matching firstSeenDatesByYear's map. */
+export function yearKey(date: string, key: string): string {
+  return `${yearOf(date)}:${key}`;
 }
 
 export async function buildCandidates(): Promise<SampleCandidate[]> {
@@ -94,7 +120,7 @@ export async function buildCandidates(): Promise<SampleCandidate[]> {
 
   // ---- bank_transactions ----
   const bankAbsSorted = bankRows.map((b) => Math.abs(toCents(b.amount))).sort((a, b) => a - b);
-  const bankFirstSeen = firstSeenDates(bankRows, (b) => b.date, (b) => b.counterparty);
+  const bankFirstSeen = firstSeenDatesByYear(bankRows, (b) => b.date, (b) => b.counterparty);
   for (const b of bankRows) {
     const cents = toCents(b.amount);
     const abs = Math.abs(cents);
@@ -104,7 +130,7 @@ export async function buildCandidates(): Promise<SampleCandidate[]> {
     const pct = percentileRank(bankAbsSorted, abs);
     if (pct >= LARGE_AMOUNT_PERCENTILE) {
       score += WEIGHTS.amount * pct;
-      reasons.push(`large amount: ${usd(abs)} (top ${Math.round((1 - pct) * 100)}% of bank_transactions by size)`);
+      reasons.push(`large amount: ${usd(abs)} (top ${percentileLabel(pct)}% of bank_transactions by size)`);
     }
 
     const round = roundNumberReason(abs);
@@ -118,9 +144,9 @@ export async function buildCandidates(): Promise<SampleCandidate[]> {
       reasons.push(`month-end date: ${b.date}`);
     }
 
-    if (bankFirstSeen.get(b.counterparty) === b.date) {
+    if (bankFirstSeen.get(yearKey(b.date, b.counterparty)) === b.date) {
       score += WEIGHTS.newCounterparty;
-      reasons.push(`new counterparty: first appearance of "${b.counterparty}" this year`);
+      reasons.push(`new counterparty: first appearance of "${b.counterparty}" in ${yearOf(b.date)}`);
     }
 
     if (priorFlagSet.has(`bank_transaction:${b.id}`)) {
@@ -140,7 +166,7 @@ export async function buildCandidates(): Promise<SampleCandidate[]> {
 
   // ---- invoices ----
   const invoiceAbsSorted = invoiceRows.map((i) => Math.abs(toCents(i.amount))).sort((a, b) => a - b);
-  const invoiceFirstSeen = firstSeenDates(invoiceRows, (i) => i.issueDate, (i) => String(i.vendorId));
+  const invoiceFirstSeen = firstSeenDatesByYear(invoiceRows, (i) => i.issueDate, (i) => String(i.vendorId));
   for (const i of invoiceRows) {
     const cents = toCents(i.amount);
     const abs = Math.abs(cents);
@@ -150,7 +176,7 @@ export async function buildCandidates(): Promise<SampleCandidate[]> {
     const pct = percentileRank(invoiceAbsSorted, abs);
     if (pct >= LARGE_AMOUNT_PERCENTILE) {
       score += WEIGHTS.amount * pct;
-      reasons.push(`large amount: ${usd(abs)} (top ${Math.round((1 - pct) * 100)}% of invoices by size)`);
+      reasons.push(`large amount: ${usd(abs)} (top ${percentileLabel(pct)}% of invoices by size)`);
     }
 
     const round = roundNumberReason(abs);
@@ -164,9 +190,9 @@ export async function buildCandidates(): Promise<SampleCandidate[]> {
       reasons.push(`month-end date: ${i.issueDate}`);
     }
 
-    if (invoiceFirstSeen.get(String(i.vendorId)) === i.issueDate) {
+    if (invoiceFirstSeen.get(yearKey(i.issueDate, String(i.vendorId))) === i.issueDate) {
       score += WEIGHTS.newCounterparty;
-      reasons.push(`new counterparty: first invoice this year from vendor #${i.vendorId}`);
+      reasons.push(`new counterparty: first invoice in ${yearOf(i.issueDate)} from vendor #${i.vendorId}`);
     }
 
     if (priorFlagSet.has(`invoice:${i.id}`)) {
@@ -186,7 +212,7 @@ export async function buildCandidates(): Promise<SampleCandidate[]> {
 
   // ---- dodo_transactions ----
   const dodoAbsSorted = dodoRows.map((d) => Math.abs(toCents(d.amount))).sort((a, b) => a - b);
-  const dodoFirstSeen = firstSeenDates(dodoRows, (d) => d.date, (d) => d.customerId);
+  const dodoFirstSeen = firstSeenDatesByYear(dodoRows, (d) => d.date, (d) => d.customerId);
   for (const d of dodoRows) {
     const cents = toCents(d.amount);
     const abs = Math.abs(cents);
@@ -196,7 +222,7 @@ export async function buildCandidates(): Promise<SampleCandidate[]> {
     const pct = percentileRank(dodoAbsSorted, abs);
     if (pct >= LARGE_AMOUNT_PERCENTILE) {
       score += WEIGHTS.amount * pct;
-      reasons.push(`large amount: ${usd(abs)} (top ${Math.round((1 - pct) * 100)}% of dodo_transactions by size)`);
+      reasons.push(`large amount: ${usd(abs)} (top ${percentileLabel(pct)}% of dodo_transactions by size)`);
     }
 
     const round = roundNumberReason(abs);
@@ -210,9 +236,9 @@ export async function buildCandidates(): Promise<SampleCandidate[]> {
       reasons.push(`month-end date: ${d.date}`);
     }
 
-    if (d.customerId && dodoFirstSeen.get(d.customerId) === d.date) {
+    if (d.customerId && dodoFirstSeen.get(yearKey(d.date, d.customerId)) === d.date) {
       score += WEIGHTS.newCounterparty;
-      reasons.push(`new counterparty: first appearance of customer ${d.customerId} this year`);
+      reasons.push(`new counterparty: first appearance of customer ${d.customerId} in ${yearOf(d.date)}`);
     }
 
     if (priorFlagSet.has(`dodo_transaction:${d.id}`)) {

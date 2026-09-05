@@ -10,6 +10,7 @@ import {
   text,
   timestamp,
 } from "drizzle-orm/pg-core";
+import type { EvidenceBundle } from "@/lib/accountant/types";
 
 // Money is numeric(12,2), dates are `date`, ids are serial integers.
 const money = (name: string) => numeric(name, { precision: 12, scale: 2 });
@@ -124,8 +125,9 @@ export const auditExchanges = pgTable("audit_exchanges", {
   role: text("role").notNull(),
   questionTemplateId: text("question_template_id"),
   content: text("content").notNull(),
-  // EvidenceBundle (see src/lib/auditor/evidence-types.ts) when role = accountant
-  evidence: jsonb("evidence"),
+  // Set when role = accountant. EvidenceBundle is the canonical type from
+  // src/lib/accountant/types.ts.
+  evidence: jsonb("evidence").$type<EvidenceBundle>(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

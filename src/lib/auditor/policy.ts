@@ -10,9 +10,12 @@ export type PolicyDecision = { action: PolicyAction; followUp?: string };
 // Gaps a further, more targeted search could plausibly close.
 const CLOSEABLE_GAPS: GapKind[] = ["missing_ledger_entry", "no_bank_match", "no_matching_invoice"];
 
-// Gaps that are structural (a fact about the books, not a search miss) and
-// always go straight to the referee.
-const STRUCTURAL_GAPS: GapKind[] = [
+// Gaps that always go straight to the referee rather than looping on
+// push-back: structural gaps (a fact about the books, not a search miss),
+// plus "other" — an uncategorized gap gives the policy no specific search to
+// point the accountant back at, so repeatedly pushing back on it would just
+// stall until turn 3 for no reason. Escalate it immediately instead.
+const ESCALATE_IMMEDIATELY: GapKind[] = [
   "duplicate_payment",
   "rate_mismatch",
   "missing_approval",
@@ -20,6 +23,7 @@ const STRUCTURAL_GAPS: GapKind[] = [
   "outside_contract_term",
   "duplicate_invoice_month",
   "payout_mismatch",
+  "other",
 ];
 
 const FOLLOW_UP_TEMPLATES: Partial<Record<GapKind, string>> = {
@@ -39,8 +43,8 @@ export function decide(bundle: EvidenceBundle, turn: number): PolicyDecision {
     return { action: "accept" };
   }
 
-  const hasStructuralGap = gaps.some((g) => STRUCTURAL_GAPS.includes(g.kind));
-  if (hasStructuralGap || turn >= 3) {
+  const hasEscalatingGap = gaps.some((g) => ESCALATE_IMMEDIATELY.includes(g.kind));
+  if (hasEscalatingGap || turn >= 3) {
     return { action: "escalate" };
   }
 

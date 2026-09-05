@@ -1,22 +1,26 @@
 /**
  * pnpm auditor:run [--seed N] [--name "..."]
  *
- * Creates an audit_runs row, draws 25 risk-weighted samples from
- * bank_transactions, invoices, and dodo_transactions, inserts them as
- * audit_samples, and writes the opening auditor question per sample as
- * turn 1 in audit_exchanges (one LLM call per sample to phrase it
- * naturally; falls back to the deterministic template text on error).
+ * Draws 25 risk-weighted samples from bank_transactions, invoices, and
+ * dodo_transactions, and prepares the opening auditor question for each
+ * (one LLM call per sample to phrase it naturally, falling back to the
+ * deterministic template text on error; a citation to the exact sampled
+ * row is guaranteed by code afterward, never left to the model). Only once
+ * every question is ready does it persist the audit_runs/audit_samples/
+ * audit_exchanges rows, in a single database transaction (persist.ts): a
+ * crash or thrown error partway through leaves zero partial rows behind.
  *
  * Same --seed against unchanged data always produces the same picks.
  */
 import "./lib/env";
-import { eq } from "drizzle-orm";
-import { db, schema, sql } from "../src/db";
+import { sql } from "../src/db";
+import { sampleCitation, withSampleCitation } from "../src/lib/auditor/citation";
 import { loadSampleDetail } from "../src/lib/auditor/detail";
 import { phraseQuestion } from "../src/lib/auditor/llm";
+import { persistRun, type PreparedSample } from "../src/lib/auditor/persist";
 import { chooseQuestion } from "../src/lib/auditor/questions";
 import { buildCandidates, pickSamples } from "../src/lib/auditor/sampler";
-import { centsToDecimalString, usd } from "../src/lib/auditor/util";
+import { usd } from "../src/lib/auditor/util";
 
 const SAMPLE_COUNT = 25;
 
@@ -38,75 +42,54 @@ async function main() {
   const { seed, name } = parseArgs(process.argv.slice(2));
   console.log(`Starting audit run "${name}" (seed=${seed})...`);
 
-  const [run] = await db
-    .insert(schema.auditRuns)
-    .values({ name, status: "running", sampleCount: SAMPLE_COUNT, notes: `seed=${seed}` })
-    .returning();
-  console.log(`Created audit_runs row #${run.id}.`);
-
   const candidates = await buildCandidates();
   console.log(`Scored ${candidates.length} candidate records.`);
 
   const picks = pickSamples(candidates, seed, SAMPLE_COUNT);
-  console.log(`Selected ${picks.length} samples.\n`);
+  console.log(`Selected ${picks.length} samples. Preparing questions (one LLM call each)...\n`);
 
-  type Row = {
-    type: string;
-    id: number;
-    amount: string;
-    score: string;
-    reasons: string;
-    question: string;
-  };
-  const printRows: Row[] = [];
-
+  // Prepare every question before touching the database: a failure here
+  // (network, model error) means nothing was ever persisted.
+  const prepared: PreparedSample[] = [];
   for (const candidate of picks) {
     const detail = await loadSampleDetail(candidate);
     const { templateId, text: fallbackText } = chooseQuestion(candidate, detail);
-    const question = await phraseQuestion(fallbackText);
-
-    const [sampleRow] = await db
-      .insert(schema.auditSamples)
-      .values({
-        runId: run.id,
-        sampleType: candidate.sampleType,
-        sampleId: candidate.sampleId,
-        amount: centsToDecimalString(candidate.amountCents),
-        riskScore: candidate.riskScore,
-        riskReasons: candidate.riskReasons,
-      })
-      .returning();
-
-    await db.insert(schema.auditExchanges).values({
-      runId: run.id,
-      sampleId: sampleRow.id,
-      turn: 1,
-      role: "auditor",
-      questionTemplateId: templateId,
-      content: question,
-    });
-
-    printRows.push({
-      type: candidate.sampleType,
-      id: candidate.sampleId,
-      amount: usd(candidate.amountCents),
-      score: candidate.riskScore.toFixed(4),
-      reasons: candidate.riskReasons.join("; ") || "(baseline, no risk flags)",
-      question,
-    });
+    const phrased = await phraseQuestion(fallbackText);
+    const question = withSampleCitation(phrased, candidate);
+    prepared.push({ candidate, templateId, question });
   }
 
-  await db.update(schema.auditRuns).set({ status: "complete" }).where(eq(schema.auditRuns.id, run.id));
+  const { runId } = await persistRun({ name, seed, samples: prepared });
 
-  printTable(printRows);
-  console.log(`\nAudit run #${run.id} complete: ${printRows.length} samples, turn 1 questions written.`);
+  printTable(
+    prepared.map((p) => ({
+      type: p.candidate.sampleType,
+      id: p.candidate.sampleId,
+      amount: usd(p.candidate.amountCents),
+      score: p.candidate.riskScore.toFixed(4),
+      reasons: p.candidate.riskReasons.join("; ") || "(baseline, no risk flags)",
+      question: p.question,
+      citation: sampleCitation(p.candidate),
+    })),
+  );
+  console.log(`\nAudit run #${runId} complete: ${prepared.length} samples, turn 1 questions written.`);
 
   await sql.end();
   process.exit(0);
 }
 
-function printTable(rows: { type: string; id: number; amount: string; score: string; reasons: string; question: string }[]) {
-  const cols: { key: keyof (typeof rows)[number]; label: string; width: number }[] = [
+type PrintRow = {
+  type: string;
+  id: number;
+  amount: string;
+  score: string;
+  reasons: string;
+  question: string;
+  citation: string;
+};
+
+function printTable(rows: PrintRow[]) {
+  const cols: { key: keyof PrintRow; label: string; width: number }[] = [
     { key: "type", label: "type", width: 16 },
     { key: "id", label: "id", width: 5 },
     { key: "amount", label: "amount", width: 14 },
@@ -118,7 +101,7 @@ function printTable(rows: { type: string; id: number; amount: string; score: str
   for (const row of rows) {
     const left = cols.map((c) => String(row[c.key]).padEnd(c.width)).join(" | ");
     console.log(`${left} | ${row.reasons}`);
-    console.log(`${" ".repeat(left.length)} | Q: ${row.question}`);
+    console.log(`${" ".repeat(left.length)} | Q (${row.citation}): ${row.question}`);
   }
 }
 

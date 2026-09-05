@@ -1,9 +1,11 @@
 /**
  * pnpm auditor:check-policy
  *
- * Quick, no-framework unit check for decide() on three hand-built
- * EvidenceBundles: one that should be accepted, one that should get a
- * targeted push-back, and one that should escalate to the referee.
+ * Quick, no-framework unit check for decide() on hand-built EvidenceBundles
+ * covering accept, push-back, and escalate, including the regression cases
+ * from review: an "other" gap must escalate immediately (not loop on
+ * push-back until turn 3), and a closeable gap must still escalate once
+ * turn >= 3.
  */
 import type { EvidenceBundle } from "./evidence-types";
 import { decide } from "./policy";
@@ -58,6 +60,54 @@ const cases: Case[] = [
     },
     turn: 1,
     expect: "escalate",
+  },
+  {
+    name: "'other' gap escalates immediately on turn 1, not a push-back loop",
+    bundle: {
+      sample: { type: "bank_transaction", id: 202 },
+      citations: [
+        { table: "bank_transactions", id: 202, field: "amount", value: "7850.00", reason: "The bank row shows the wired amount." },
+      ],
+      gaps: [{ kind: "other", description: "Counterparty does not match any known category; cause unclear." }],
+    },
+    turn: 1,
+    expect: "escalate",
+  },
+  {
+    name: "closeable gap still escalates once turn >= 3 (search budget exhausted)",
+    bundle: {
+      sample: { type: "dodo_transaction", id: 92 },
+      citations: [
+        { table: "dodo_transactions", id: 92, field: "amount", value: "499.00", reason: "The refund row itself confirms the amount." },
+      ],
+      gaps: [{ kind: "missing_ledger_entry", description: "Still no ledger_entries row after two more searches." }],
+    },
+    turn: 3,
+    expect: "escalate",
+  },
+  {
+    name: "no gaps but no citation covers the amount: push back for one",
+    bundle: {
+      sample: { type: "invoice", id: 4 },
+      citations: [
+        { table: "vendors", id: 1, field: "name", value: "Stratus Compute Inc.", reason: "Confirms the vendor exists." },
+      ],
+      gaps: [],
+    },
+    turn: 1,
+    expect: "push_back",
+  },
+  {
+    name: "no_bank_match gap on turn 2 is still closeable, pushes back",
+    bundle: {
+      sample: { type: "bank_transaction", id: 907 },
+      citations: [
+        { table: "ledger_entries", id: 907, field: "debit", value: "1875.00", reason: "The adjustment entry shows the amount." },
+      ],
+      gaps: [{ kind: "no_bank_match", description: "No bank_transactions row on or near 2025-08-14 for $1,875.00." }],
+    },
+    turn: 2,
+    expect: "push_back",
   },
 ];
 
