@@ -2,7 +2,7 @@
  * Deterministic evidence gathering. No LLM, no randomness: given a sample id
  * the same rows come back every time, in the same order.
  *
- * Matching rules and the windows they use are stated in MATCHING below so the
+ * The matching rules and the windows they use live in ./matching.ts so the
  * referee can audit the accountant's search, not just its prose.
  */
 import { and, eq, gte, inArray, like, lte, ne, or } from "drizzle-orm";
@@ -16,6 +16,13 @@ import {
   ledgerEntries,
   vendors,
 } from "../../db/schema";
+import {
+  classifyPaymentLink,
+  describeRejection,
+  MATCHING,
+  paymentWindow,
+  type PaymentCandidate,
+} from "./matching";
 import { addDays, dodoFeeCents, monthKey, monthOf, toCents, usd } from "./money";
 import { formatSampleId } from "./sample";
 import type { Citation, EvidenceBundle, Gap, GapKind, SampleRef } from "./types";
@@ -25,21 +32,7 @@ type Invoice = InferSelectModel<typeof invoices>;
 type Bank = InferSelectModel<typeof bankTransactions>;
 type Dodo = InferSelectModel<typeof dodoTransactions>;
 
-export const MATCHING = {
-  /**
-   * An invoice/bank pair matches on an exact reference (bank.reference =
-   * invoices.invoice_number) or, when the bank line carries no invoice number,
-   * on same vendor + same absolute amount with the bank date inside the
-   * invoice's payment window: issue_date - 7 days .. due_date + 7 days.
-   */
-  paymentWindowDays: 7,
-  /** Cash is reconciled against the bank feed within this many days of the sample. */
-  cashScanWindowDays: 3,
-  /** Internal policy: invoices above this need a named approver. */
-  approvalThresholdCents: 1_000_000,
-  /** Unknown counterparties above this are called out as the material case. */
-  unknownCounterpartyNotableCents: 500_000,
-} as const;
+export { MATCHING } from "./matching";
 
 // Counterparties that are not vendors but are still known: the payroll account,
 // the payment processor, and the company's own bank (fees and interest).
@@ -244,7 +237,7 @@ async function invoiceCore(ev: Evidence, invoice: Invoice) {
 
 /** Finds the bank payment(s) behind an invoice and flags duplicates or no payment at all. */
 async function linkPayments(ev: Evidence, invoice: Invoice): Promise<Bank[]> {
-  const matches = await bankMatchesForInvoice(invoice);
+  const matches = await bankMatchesForInvoice(ev, invoice);
   for (const b of matches) {
     citeBankRow(ev, b, `Bank payment matched to invoice ${invoice.invoiceNumber}.`);
     await checkLedger(ev, {
@@ -255,10 +248,11 @@ async function linkPayments(ev: Evidence, invoice: Invoice): Promise<Bank[]> {
   }
 
   const amount = toCents(invoice.amount);
+  const window = paymentWindow(invoice);
   if (matches.length === 0) {
     ev.gap(
       "no_bank_match",
-      `No bank payment of ${usd(amount)} to this vendor sits inside invoice ${invoice.invoiceNumber}'s payment window (${addDays(invoice.issueDate, -MATCHING.paymentWindowDays)} to ${addDays(invoice.dueDate, MATCHING.paymentWindowDays)}).`,
+      `No bank payment of ${usd(amount)} to this vendor sits inside invoice ${invoice.invoiceNumber}'s payment window (${window.from} to ${window.to}).`,
     );
   } else if (matches.length > 1) {
     const detail = matches.map((b) => `#${b.id} on ${b.date}`).join(" and ");
@@ -270,47 +264,97 @@ async function linkPayments(ev: Evidence, invoice: Invoice): Promise<Bank[]> {
   return matches;
 }
 
-async function bankMatchesForInvoice(invoice: Invoice): Promise<Bank[]> {
-  const exact = await db
+/**
+ * Bank lines that settle an invoice. Two candidate pools are considered: lines
+ * quoting the invoice number, and lines to the same vendor for the same amount
+ * inside the payment window. Both pools go through the same rule, so quoting an
+ * invoice number is never enough on its own.
+ */
+async function bankMatchesForInvoice(ev: Evidence, invoice: Invoice): Promise<Bank[]> {
+  const vendor = await one(db.select().from(vendors).where(eq(vendors.id, invoice.vendorId)));
+  const window = paymentWindow(invoice);
+
+  const quoting = await db
     .select()
     .from(bankTransactions)
     .where(eq(bankTransactions.reference, invoice.invoiceNumber));
+  const sameVendorAndAmount = vendor
+    ? await db
+        .select()
+        .from(bankTransactions)
+        .where(
+          and(
+            eq(bankTransactions.counterparty, vendor.name),
+            eq(bankTransactions.amount, negate(invoice.amount)),
+            gte(bankTransactions.date, window.from),
+            lte(bankTransactions.date, window.to),
+          ),
+        )
+    : [];
 
-  const vendor = await one(db.select().from(vendors).where(eq(vendors.id, invoice.vendorId)));
-  let fuzzy: Bank[] = [];
-  if (vendor) {
-    const candidates = await db
-      .select()
-      .from(bankTransactions)
-      .where(
-        and(
-          eq(bankTransactions.counterparty, vendor.name),
-          eq(bankTransactions.amount, negate(invoice.amount)),
-          gte(bankTransactions.date, addDays(invoice.issueDate, -MATCHING.paymentWindowDays)),
-          lte(bankTransactions.date, addDays(invoice.dueDate, MATCHING.paymentWindowDays)),
-        ),
-      );
-    // A bank line that quotes another invoice's number belongs to that invoice.
-    fuzzy = await withoutInvoiceReferences(
-      candidates.filter((c) => !exact.some((e) => e.id === c.id)),
-    );
+  const candidates = dedupeById([...quoting, ...sameVendorAndAmount]);
+  const invoiceNumbers = await invoiceNumbersAmong(candidates.map((c) => c.reference));
+  const matches: Bank[] = [];
+  for (const bank of candidates) {
+    const candidate = paymentCandidate(invoice, vendor?.name ?? "", bank, invoiceNumbers);
+    const link = classifyPaymentLink(candidate);
+    if (link.matched) {
+      matches.push(bank);
+    } else if (link.quotesInvoice) {
+      reportQuotingMismatch(ev, invoice, bank, describeRejection(link.reason, candidate));
+    }
   }
-  return [...exact, ...fuzzy].sort((a, b) => a.id - b.id);
+  return matches;
 }
 
-async function withoutInvoiceReferences(rows: Bank[]): Promise<Bank[]> {
-  if (rows.length === 0) return [];
-  const claimed = await db
+/** Invoice numbers that actually exist among a set of bank references. */
+async function invoiceNumbersAmong(references: string[]): Promise<Set<string>> {
+  if (references.length === 0) return new Set();
+  const rows = await db
     .select({ invoiceNumber: invoices.invoiceNumber })
     .from(invoices)
-    .where(
-      inArray(
-        invoices.invoiceNumber,
-        rows.map((r) => r.reference),
-      ),
-    );
-  const taken = new Set(claimed.map((c) => c.invoiceNumber));
-  return rows.filter((r) => !taken.has(r.reference));
+    .where(inArray(invoices.invoiceNumber, references));
+  return new Set(rows.map((r) => r.invoiceNumber));
+}
+
+function paymentCandidate(
+  invoice: Invoice,
+  vendorName: string,
+  bank: Bank,
+  invoiceNumbers: Set<string>,
+): PaymentCandidate {
+  return {
+    invoiceNumber: invoice.invoiceNumber,
+    invoiceAmountCents: toCents(invoice.amount),
+    issueDate: invoice.issueDate,
+    dueDate: invoice.dueDate,
+    vendorName,
+    bankReference: bank.reference,
+    bankCounterparty: bank.counterparty,
+    bankAmountCents: toCents(bank.amount),
+    bankDate: bank.date,
+    referenceClaimedByAnotherInvoice:
+      bank.reference !== invoice.invoiceNumber && invoiceNumbers.has(bank.reference),
+  };
+}
+
+/**
+ * A bank line that quotes an invoice number but fails the vendor, amount or
+ * date test is neither attached nor dropped in silence: it is cited and
+ * reported, because a payment quoting the wrong invoice is itself a finding.
+ */
+function reportQuotingMismatch(ev: Evidence, invoice: Invoice, bank: Bank, why: string) {
+  citeBankRow(ev, bank, `Bank line quoting invoice ${invoice.invoiceNumber} that does not settle it.`);
+  ev.gap(
+    "other",
+    `Bank transaction #${bank.id} on ${bank.date} quotes invoice ${invoice.invoiceNumber} (${usd(toCents(invoice.amount))}, issued ${invoice.issueDate}) but ${why}, so it is not treated as settlement of that invoice.`,
+  );
+}
+
+function dedupeById<T extends { id: number }>(rows: T[]): T[] {
+  const byId = new Map<number, T>();
+  for (const row of rows) if (!byId.has(row.id)) byId.set(row.id, row);
+  return [...byId.values()].sort((a, b) => a.id - b.id);
 }
 
 // ---------- bank transactions ----------
@@ -342,7 +386,7 @@ async function bankCore(ev: Evidence, bank: Bank) {
     );
   }
 
-  const linked = await invoicesForBankRow(bank, vendor);
+  const linked = await invoicesForBankRow(ev, bank, vendor);
   for (const invoice of linked) {
     await invoiceCore(ev, invoice);
     await linkPayments(ev, invoice);
@@ -375,25 +419,37 @@ async function bankCore(ev: Evidence, bank: Bank) {
   }
 }
 
-async function invoicesForBankRow(bank: Bank, vendor: Vendor | undefined): Promise<Invoice[]> {
-  const exact = await db
+/** The same rule seen from the bank side: which invoice, if any, this line settles. */
+async function invoicesForBankRow(
+  ev: Evidence,
+  bank: Bank,
+  vendor: Vendor | undefined,
+): Promise<Invoice[]> {
+  const quoted = await db
     .select()
     .from(invoices)
     .where(eq(invoices.invoiceNumber, bank.reference));
-  if (exact.length > 0) return exact;
-  if (!vendor || toCents(bank.amount) >= 0) return [];
+  const sameVendorAndAmount =
+    vendor && toCents(bank.amount) < 0
+      ? await db
+          .select()
+          .from(invoices)
+          .where(and(eq(invoices.vendorId, vendor.id), eq(invoices.amount, absolute(bank.amount))))
+      : [];
 
-  const sameAmount = await db
-    .select()
-    .from(invoices)
-    .where(and(eq(invoices.vendorId, vendor.id), eq(invoices.amount, absolute(bank.amount))));
-  return sameAmount
-    .filter(
-      (i) =>
-        bank.date >= addDays(i.issueDate, -MATCHING.paymentWindowDays) &&
-        bank.date <= addDays(i.dueDate, MATCHING.paymentWindowDays),
-    )
-    .sort((a, b) => a.id - b.id);
+  const candidates = dedupeById([...quoted, ...sameVendorAndAmount]);
+  const invoiceNumbers = new Set(quoted.map((i) => i.invoiceNumber));
+  const matches: Invoice[] = [];
+  for (const invoice of candidates) {
+    const candidate = paymentCandidate(invoice, vendor?.name ?? "", bank, invoiceNumbers);
+    const link = classifyPaymentLink(candidate);
+    if (link.matched) {
+      matches.push(invoice);
+    } else if (link.quotesInvoice) {
+      reportQuotingMismatch(ev, invoice, bank, describeRejection(link.reason, candidate));
+    }
+  }
+  return matches;
 }
 
 /**
@@ -473,6 +529,13 @@ async function dodoCore(ev: Evidence, dodo: Dodo) {
     : undefined;
   if (original) {
     citeDodoRow(ev, original, `Original payment this ${dodo.type} was raised against.`);
+    // The linked payment is part of the chain being defended, so its own
+    // journal entry is gathered and validated, not assumed.
+    await checkLedger(ev, {
+      label: `Dodo payment ${shortRef(original.reference)} for ${usd(toCents(original.amount))}`,
+      sourceTypes: ["dodo"],
+      sourceId: original.id,
+    });
   }
   const month = original ? monthOf(original.date) : monthOf(dodo.date);
 
@@ -555,6 +618,14 @@ async function dodoPayoutChecks(ev: Evidence, payout: Dodo, all: Dodo[]) {
     reason: `Month ${month} payout: ${payments.length} payments ${usd(paymentTotal)} less refunds ${usd(refundTotal)} less fees ${usd(feeTotal)} (4% + $0.40 each) is ${usd(expected)}.`,
   });
 
+  // The payout is a linked event in its own right: the month's fee journal is
+  // booked against it, so those debit and credit rows are validated here.
+  await checkLedger(ev, {
+    label: `Dodo payout ${shortRef(payout.reference)} for month ${month}`,
+    sourceTypes: ["dodo"],
+    sourceId: payout.id,
+  });
+
   if (expected !== actual) {
     const diff = expected - actual;
     const unrecorded = all.filter(
@@ -630,19 +701,36 @@ async function checkLedger(
   }
 
   if (opts.required === false) return;
-  const debits = sorted.filter((l) => toCents(l.debit) !== 0);
-  const credits = sorted.filter((l) => toCents(l.credit) !== 0);
-  if (sorted.length === 0) {
+  const verdict = classifyLedgerRows(
+    sorted.map((l) => ({ debit: l.debit, credit: l.credit })),
+  );
+  if (verdict.state === "missing") {
     ev.gap(
       "missing_ledger_entry",
       `${opts.label} has no ledger entry (no rows with source_type in ${opts.sourceTypes.join("/")} and source_id ${opts.sourceId}).${opts.missingNote ? ` ${opts.missingNote}` : ""}`,
     );
-  } else if (debits.length === 0 || credits.length === 0) {
+  } else if (verdict.state === "unbalanced") {
     ev.gap(
       "missing_ledger_entry",
-      `${opts.label} is booked with ${debits.length} debit and ${credits.length} credit lines; a balanced entry needs both.`,
+      `${opts.label} is booked with ${verdict.debits} debit and ${verdict.credits} credit lines; a balanced entry needs both.`,
     );
   }
+}
+
+/**
+ * A journal entry is complete only with both sides booked. Pure so the rule can
+ * be tested without a database.
+ */
+export function classifyLedgerRows(rows: { debit: string; credit: string }[]): {
+  state: "ok" | "missing" | "unbalanced";
+  debits: number;
+  credits: number;
+} {
+  const debits = rows.filter((l) => toCents(l.debit) !== 0).length;
+  const credits = rows.filter((l) => toCents(l.credit) !== 0).length;
+  if (rows.length === 0) return { state: "missing", debits, credits };
+  if (debits === 0 || credits === 0) return { state: "unbalanced", debits, credits };
+  return { state: "ok", debits, credits };
 }
 
 // ---------- small helpers ----------

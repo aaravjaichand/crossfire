@@ -4,14 +4,15 @@
  * told to admit a gap rather than argue around it.
  */
 import { complete } from "../llm";
+import { finalizeDefense } from "./citations";
 import { formatSampleId } from "./sample";
 import type { EvidenceBundle } from "./types";
 
-const SYSTEM = [
+export const DEFENSE_SYSTEM_PROMPT = [
   "You are the Accountant at Northwind Labs, Inc. answering an auditor's request for evidence on one sampled transaction.",
   "Write 3 to 5 sentences of plain prose. No headings, no bullet lists, no markdown.",
   "Use ONLY the numbered evidence and gaps given to you. Never invent a document, amount, date, name, or row id.",
-  "Reference every factual claim with the row it came from in square brackets, like [invoices#15] or [bank_transactions#72].",
+  "Every sentence that states an amount, a date, a name or any other specific fact must contain at least one row reference in square brackets, like [invoices#15] or [bank_transactions#72]. This includes the sentence that concedes a gap: cite the row the gap was found on.",
   "Brackets may only ever contain a table name and a row id from the evidence. Never bracket a gap, a rule, or a list item.",
   "If the evidence has gaps, say plainly and immediately that the item is not fully supported, name what is missing, and do not argue around it.",
   "If there are no gaps, state that the item ties out and show the chain: document, payment, ledger.",
@@ -47,39 +48,13 @@ export function buildDefensePrompt(bundle: EvidenceBundle): string {
   ].join("\n");
 }
 
-/** Adds bundle.defense using exactly one LLM call. Leaves the bundle otherwise untouched. */
-export async function writeDefense(bundle: EvidenceBundle): Promise<EvidenceBundle> {
-  const defense = await complete(SYSTEM, buildDefensePrompt(bundle));
-  return { ...bundle, defense: keepOnlyCitedRows(defense, bundle) };
-}
-
 /**
- * glm-4-7-flash sometimes writes "[gaps#1]" or "[gap: rate_mismatch]" next to
- * the real row references. Only a bracket naming a row that is actually in the
- * bundle is a citation; anything else is removed rather than shown to the
- * referee as if it were evidence.
+ * Adds bundle.defense using exactly one LLM call. The model's paragraph only
+ * survives if it satisfies the citation invariant; otherwise the deterministic
+ * fallback is used, still without a second request.
  */
-export function keepOnlyCitedRows(text: string, bundle: EvidenceBundle): string {
-  const cited = new Set(bundle.citations.map((c) => `${c.table}#${c.id}`));
-  return text
-    .replace(/\[[^\]]*\]/g, (match) => {
-      const parts = match
-        .slice(1, -1)
-        .split(",")
-        .map((p) => p.trim())
-        .filter(Boolean);
-      if (parts.length === 0) return "";
-      // "[ledger_entries#225, #226]" repeats the table implicitly.
-      let table: string | undefined;
-      for (const part of parts) {
-        const m = part.match(/^([a-z_]+)?#(\d+)$/);
-        if (!m) return "";
-        table = m[1] ?? table;
-        if (!table || !cited.has(`${table}#${m[2]}`)) return "";
-      }
-      return match;
-    })
-    .replace(/[ \t]+([.,;:])/g, "$1")
-    .replace(/[ \t]{2,}/g, " ")
-    .trim();
+export async function writeDefense(bundle: EvidenceBundle): Promise<EvidenceBundle> {
+  const modelText = await complete(DEFENSE_SYSTEM_PROMPT, buildDefensePrompt(bundle));
+  const final = finalizeDefense(modelText, bundle);
+  return { ...bundle, defense: final.defense };
 }
