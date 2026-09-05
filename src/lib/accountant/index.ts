@@ -10,8 +10,23 @@ export async function defend(sample: SampleRef): Promise<EvidenceBundle> {
   return writeDefense(await gatherEvidence(sample));
 }
 
-export { gatherEvidence, MATCHING } from "./gather";
+export { gatherEvidence, MATCHING, classifyLedgerRows } from "./gather";
 export { writeDefense, buildDefensePrompt } from "./defend";
+export {
+  buildFallbackDefense,
+  finalizeDefense,
+  isFactualSentence,
+  keepOnlyCitedRows,
+  splitSentences,
+  validateDefense,
+} from "./citations";
+export {
+  classifyPaymentLink,
+  describeRejection,
+  paymentWindow,
+  type PaymentCandidate,
+  type PaymentLink,
+} from "./matching";
 export { formatBundle } from "./format";
 export { parseSampleId, formatSampleId, SAMPLE_ID_HELP } from "./sample";
 export { toCents, usd } from "./money";

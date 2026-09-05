@@ -16,7 +16,9 @@ function getClient(): OpenAI {
       apiKey: process.env.TENSORMUX_API_KEY,
       baseURL: LLM_BASE_URL,
       timeout: LLM_TIMEOUT_MS,
-      maxRetries: 1,
+      // One sample, one HTTP request. A retry would be a second call the
+      // referee never asked for, so a failed call fails loudly instead.
+      maxRetries: 0,
     });
   }
   return client;
