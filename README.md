@@ -215,15 +215,11 @@ made outside a run is buffered and flushed rather than dropped.
 
 Vercel plus a hosted Postgres.
 
-- `DATABASE_URL` — use Supabase's **session pooler** URL (port 5432) with
-  `?idle_timeout=10&connect_timeout=15` on the end. The postgres.js client is
-  created with `prepare: false`, so the transaction pooler connects too, but do
-  not use it from Vercel: the pool is `max: 5`, the home page issues eight
-  queries at once, and postgres.js pipelines the overflow onto a connection the
-  transaction pooler cannot multiplex, so the page hangs rather than answering.
-  The session pooler handles the same eight in one round trip. Its own limit is
-  15 clients, which five connections per serverless instance would exhaust in
-  three cold starts — `idle_timeout` is what returns them.
+- `DATABASE_URL` — use Supabase's **session pooler** URL (port 5432). The
+  postgres.js client is created with `prepare: false`, a pool of 10 (wider than
+  the eight queries the home page fires at once, so nothing is pipelined onto a
+  busy connection), and a 10 second idle timeout so serverless instances hand
+  connections back before the pooler's client limit is reached.
 - `TENSORMUX_API_KEY` — the model. Without it every run falls back to
   deterministic prose, which still reads correctly and still cites. Calls go
   out at temperature 0 with `reasoning_effort: "none"`, because the model is
