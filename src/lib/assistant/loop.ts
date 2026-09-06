@@ -307,7 +307,11 @@ export async function answerQuestion(
 
     let final: { content: string; source: "model" | "fallback"; reason?: string } | undefined;
 
-    if (modelText !== undefined && results.length > 0) {
+    // A proposal has no rows to cite yet, so the model cannot write a
+    // checkable sentence about it. The card is the answer.
+    if (results.some((r) => r.name === "start_run") && results.every((r) => r.citations.length === 0)) {
+      final = { content: buildFallbackAnswer(results), source: "fallback", reason: "written by code: a proposal is reported, not phrased" };
+    } else if (modelText !== undefined && results.length > 0) {
       final = finalizeAnswer(modelText, results, question);
       // One rewrite, told exactly what failed. The rows are already in hand, so
       // this costs a short call and nothing else; a second failure is final.

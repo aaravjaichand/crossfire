@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { memoryResolvedIds } from "@/lib/accountant/memory";
+import { loadVerifiedDraft, type VerifiedDraft } from "@/lib/assistant/handoff";
 import { proposeAdjustment } from "@/lib/referee/adjustments";
 import { CYCLES, cycleLabel } from "@/lib/referee/cycles";
 import {
@@ -22,10 +23,13 @@ export const dynamic = "force-dynamic";
 
 export default async function AuditRunPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ runId: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { runId } = await params;
+  const query = await searchParams;
 
   let run: RunView | null;
   let memoryResolved: string[];
@@ -55,6 +59,12 @@ export default async function AuditRunPage({
   const gaps = run.samples.filter((sample) => sample.status === "gap");
   const opening = gaps.find((sample) => !sample.ruling) ?? gaps[0] ?? run.samples[0];
   const { defended, total, percent } = coverage(run);
+  // A draft the assistant wrote, handed over by message id. It is loaded and
+  // verified against this run and the selected sample; anything else is
+  // ignored silently. It pre-fills the note field and nothing more.
+  const requested = Array.isArray(query.s) ? query.s[0] : query.s;
+  const draft: VerifiedDraft | null =
+    query.draft === undefined ? null : await loadVerifiedDraft(query.draft, run.id, requested ?? opening?.id ?? null);
   // The entries are deterministic and cheap, so they are computed here for
   // every sample and handed down as plain props: switching samples then needs
   // nothing from the server.
@@ -69,6 +79,7 @@ export default async function AuditRunPage({
       entries={entries}
       memoryResolved={memoryResolved}
       fallbackId={opening?.id ?? null}
+      draft={draft}
       headerLead={
         <div key="lead" className="min-w-0">
           <div className="flex min-w-0 items-baseline gap-3">

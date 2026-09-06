@@ -2,6 +2,7 @@
 
 import { useSearchParams } from "next/navigation";
 import { useCallback, type ReactNode } from "react";
+import type { VerifiedDraft } from "@/lib/assistant/handoff";
 import type { ProposedEntry } from "@/lib/referee/adjustments";
 import type { SampleView } from "@/lib/referee/data";
 import { parseSampleId } from "@/lib/referee/sample-id";
@@ -27,6 +28,7 @@ export function RunWorkspace({
   entries,
   memoryResolved,
   fallbackId,
+  draft,
   headerLead,
   headerMiddle,
 }: {
@@ -37,6 +39,8 @@ export function RunWorkspace({
   entries: Record<string, ProposedEntry>;
   memoryResolved: string[];
   fallbackId: string | null;
+  /** An assistant draft verified by the server against this run and a sample. */
+  draft?: VerifiedDraft | null;
   headerLead: ReactNode;
   headerMiddle: ReactNode;
 }) {
@@ -70,6 +74,7 @@ export function RunWorkspace({
               sampleId={ref.id}
               entry={entry}
               ruling={selected.ruling}
+              draft={draft && draft.sampleRef === selected.id ? draft : undefined}
             />
           ) : (
             <span className="text-[12px] text-ink-3">No sample selected</span>

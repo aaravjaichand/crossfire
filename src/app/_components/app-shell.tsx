@@ -160,6 +160,14 @@ export function AppShell({
             collapsed={false}
             onNavigate={releaseNavigationFocus}
           />
+          <NavItem
+            href="/assistant"
+            label="Assistant"
+            icon={<IconChat />}
+            active={pathname.startsWith("/assistant")}
+            collapsed={false}
+            onNavigate={releaseNavigationFocus}
+          />
 
           {runs.length > 0 ? (
             <div className="mt-5">
@@ -264,6 +272,14 @@ function IconBook() {
     <svg width="16" height="16" viewBox="0 0 16 16" {...STROKE} aria-hidden>
       <path d="M2.5 3h4.5a1 1 0 0 1 1 1v9.5a1.5 1.5 0 0 0-1.5-1.5H2.5z" />
       <path d="M13.5 3H9a1 1 0 0 0-1 1v9.5A1.5 1.5 0 0 1 9.5 12h4z" />
+    </svg>
+  );
+}
+
+function IconChat() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" {...STROKE} aria-hidden>
+      <path d="M3.5 3h9A1.5 1.5 0 0 1 14 4.5v5A1.5 1.5 0 0 1 12.5 11H7l-3 2.5V11h-.5A1.5 1.5 0 0 1 2 9.5v-5A1.5 1.5 0 0 1 3.5 3z" />
     </svg>
   );
 }

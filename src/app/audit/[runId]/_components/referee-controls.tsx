@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
+import type { VerifiedDraft } from "@/lib/assistant/handoff";
 import { submitVerdict, type DecisionResult } from "@/lib/referee/actions";
 import type { ProposedEntry } from "@/lib/referee/adjustments";
 import type { Ruling } from "@/lib/referee/data";
@@ -35,6 +36,7 @@ export function RefereeControls({
   sampleId,
   entry,
   ruling,
+  draft,
 }: {
   runId: string;
   sampleType: SampleType;
@@ -42,18 +44,34 @@ export function RefereeControls({
   /** The adjusting entry proposed for this sample's gap, computed on the server. */
   entry: ProposedEntry;
   ruling?: Ruling;
+  /**
+   * A note the assistant drafted for this sample, already verified by the
+   * server. It pre-fills the note field of its own verdict when that panel is
+   * opened, and pre-marks its remedy. The panel does not open on its own and
+   * no verdict is submitted: the controller still signs it.
+   */
+  draft?: VerifiedDraft;
 }) {
   const [pending, startTransition] = useTransition();
   const [open, setOpen] = useState<Verdict | null>(null);
   const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // True while the note field holds the assistant's text unedited.
+  const [fromDraft, setFromDraft] = useState(false);
 
   // Moving to another sample must not carry a half-written note with it.
   useEffect(() => {
     setOpen(null);
     setNote("");
+    setFromDraft(false);
     setError(null);
-  }, [runId, sampleType, sampleId]);
+  }, [runId, sampleType, sampleId, draft?.messageId]);
+
+  function editNote(value: string) {
+    setNote(value);
+    // Editing clears the label: once changed, the text is the controller's.
+    if (fromDraft && value !== draft?.note) setFromDraft(false);
+  }
 
   const input = { runId, sampleType, sampleId };
 
@@ -88,7 +106,9 @@ export function RefereeControls({
       file(verdict);
       return;
     }
-    setNote("");
+    const drafted = draft && draft.verdict === verdict;
+    setNote(drafted ? draft.note : "");
+    setFromDraft(Boolean(drafted && draft.note));
     setOpen((current) => (current === verdict ? null : verdict));
   }
 
@@ -130,10 +150,11 @@ export function RefereeControls({
             }}
           >
             <PanelHeading title={VERDICT_LABEL[open]} hint={VERDICT_HINT[open]} />
+            {fromDraft ? <DraftedLine /> : null}
             <input
               autoFocus
               value={note}
-              onChange={(e) => setNote(e.target.value)}
+              onChange={(e) => editNote(e.target.value)}
               maxLength={500}
               placeholder={
                 open === "needs_more"
@@ -163,9 +184,10 @@ export function RefereeControls({
         <Panel onClose={() => setOpen(null)}>
           <PanelHeading title="Exception" hint={VERDICT_HINT.exception} />
           <ProposedEntryCard entry={entry} />
+          {fromDraft ? <DraftedLine /> : null}
           <input
             value={note}
-            onChange={(e) => setNote(e.target.value)}
+            onChange={(e) => editNote(e.target.value)}
             maxLength={500}
             placeholder="Note (optional)"
             aria-label="Exception note"
@@ -174,18 +196,26 @@ export function RefereeControls({
           <div className="mt-3">
             <div className="text-[11.5px] text-ink-3">Choosing a remedy files the exception.</div>
             <div className="mt-1.5 grid grid-cols-2 gap-1.5">
-              {REMEDIES.map((remedy) => (
-                <button
-                  key={remedy}
-                  type="button"
-                  className="btn w-full justify-center"
-                  title={REMEDY_HINT[remedy]}
-                  onClick={() => file("exception", remedy)}
-                  disabled={pending}
-                >
-                  {REMEDY_LABEL[remedy]}
-                </button>
-              ))}
+              {REMEDIES.map((remedy) => {
+                const suggested = draft?.verdict === "exception" && draft.remedy === remedy;
+                return (
+                  <button
+                    key={remedy}
+                    type="button"
+                    className={`btn w-full justify-center ${suggested ? "bg-accent-soft" : ""}`}
+                    title={suggested ? `${REMEDY_HINT[remedy]} Pre-selected by the assistant's draft.` : REMEDY_HINT[remedy]}
+                    onClick={() => file("exception", remedy)}
+                    disabled={pending}
+                  >
+                    {suggested ? (
+                      <span className="font-mono text-[11px]" aria-hidden>
+                        ◆
+                      </span>
+                    ) : null}
+                    {REMEDY_LABEL[remedy]}
+                  </button>
+                );
+              })}
             </div>
           </div>
         </Panel>
@@ -203,6 +233,19 @@ function Panel({ children, onClose }: { children: React.ReactNode; onClose: () =
       className="absolute right-0 top-full z-30 mt-2 w-[26rem] rounded-xl border border-line bg-paper p-4 text-left shadow-[0_14px_40px_rgba(0,0,0,0.12)]"
     >
       {children}
+    </div>
+  );
+}
+
+// The ◆ already means "carried forward" on the sample list; it means the same
+// thing here — this text came from somewhere other than the person signing it.
+function DraftedLine() {
+  return (
+    <div className="mt-3 text-[11.5px] text-ink-3">
+      <span className="font-mono" aria-hidden>
+        ◆
+      </span>{" "}
+      Drafted by the assistant — edit before filing.
     </div>
   );
 }
