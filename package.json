@@ -19,6 +19,7 @@
     "auditor:check-sampler": "tsx src/lib/auditor/sampler.check.ts",
     "auditor:check-persist": "tsx src/lib/auditor/persist.check.ts",
     "engine:check": "tsx src/lib/engine/run.check.ts",
+    "engine:latency": "tsx src/lib/engine/latency.check.ts",
     "tracing:check": "tsx src/lib/tracing/tracing.check.ts",
     "binder:check": "tsx src/lib/binder/binder.check.ts",
     "auditor:check": "pnpm auditor:check-policy && pnpm auditor:check-citation && pnpm auditor:check-sampler && pnpm auditor:check-persist",
