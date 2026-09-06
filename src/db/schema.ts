@@ -10,7 +10,12 @@ import {
   text,
   timestamp,
 } from "drizzle-orm/pg-core";
-import type { EvidenceBundle } from "@/lib/accountant/types";
+import type { Citation, DefenseSource, EvidenceBundle } from "@/lib/accountant/types";
+import type {
+  AssistantDraft,
+  AssistantToolCall,
+  AssistantToolResult,
+} from "@/lib/assistant/types";
 
 // Money is numeric(12,2), dates are `date`, ids are serial integers.
 const money = (name: string) => numeric(name, { precision: 12, scale: 2 });
@@ -220,4 +225,43 @@ export const auditRuns = pgTable("audit_runs", {
   // Samples settled so far (defended or gap), for polling while status is
   // "running". Always incremented in SQL, never read-modify-written.
   progress: integer("progress").notNull().default(0),
+});
+
+// ---- the controller's assistant ----
+//
+// One thread per conversation, one row per turn. run_id is text and FK-free
+// for the same reason referee_decisions.run_id is: the walkthrough has no
+// audit_runs row. A draft on a message is a note or remedy the human has not
+// filed; it is never a ruling, and nothing in src/lib/assistant writes to
+// referee_decisions or learned_rules.
+export const assistantThreads = pgTable("assistant_threads", {
+  id: serial("id").primaryKey(),
+  // First user message, trimmed to ~80 chars. Written once, on creation.
+  title: text("title").notNull(),
+  // Run key ("7" or "mock").
+  runId: text("run_id"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const assistantMessages = pgTable("assistant_messages", {
+  id: serial("id").primaryKey(),
+  threadId: integer("thread_id")
+    .notNull()
+    .references(() => assistantThreads.id),
+  turn: integer("turn").notNull(),
+  // user | assistant
+  role: text("role").notNull(),
+  content: text("content").notNull(),
+  toolCalls: jsonb("tool_calls").$type<AssistantToolCall[]>(),
+  toolResults: jsonb("tool_results").$type<AssistantToolResult[]>(),
+  citations: jsonb("citations").$type<Citation[]>(),
+  // A note or remedy the human has not filed. Never a ruling.
+  draft: jsonb("draft").$type<AssistantDraft>(),
+  runId: text("run_id"),
+  // "invoice:24"
+  sampleRef: text("sample_ref"),
+  // Mirrors EvidenceBundle.defenseSource: model | fallback, plus why.
+  answerSource: jsonb("answer_source").$type<DefenseSource>(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
 });
