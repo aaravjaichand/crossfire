@@ -10,7 +10,7 @@ const mono = Geist_Mono({ subsets: ["latin"], variable: "--font-geist-mono" });
 export const metadata: Metadata = {
   title: "Crossfire",
   description:
-    "An AI auditor interrogates the books, an AI accountant defends them, a human referees.",
+    "An AI auditor interrogates the books, an AI accountant defends them, a human controller rules on what is left.",
 };
 
 export const dynamic = "force-dynamic";

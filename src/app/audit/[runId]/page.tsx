@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { proposeAdjustment } from "@/lib/referee/adjustments";
-import { cycleLabel } from "@/lib/referee/cycles";
+import { CYCLES, cycleLabel } from "@/lib/referee/cycles";
 import {
   coverage,
   formatMoney,
@@ -116,14 +116,29 @@ export default async function AuditRunPage({
  * has the same shape before and after.
  */
 function RunParameters({ run, sampleCount }: { run: RunView; sampleCount: number }) {
-  const parts = [
+  const cycles = run.cycles ?? [];
+  const head = [
     `Materiality ${run.materiality === undefined ? "—" : formatMoney(run.materiality / 100)}`,
     `${run.sampleCount ?? sampleCount} samples`,
-    `Cycles ${run.cycles?.map(cycleLabel).join(", ") ?? "—"}`,
   ];
+  // Ids, not names. The full labels run to about 90 characters for the default
+  // four, which does not fit this row at any realistic width, and a line cut
+  // off at "Cash and b…" tells the controller less than the ids do. The names
+  // are on the title for anyone who wants them.
+  const shown =
+    cycles.length === 0
+      ? "Cycles —"
+      : cycles.length === CYCLES.length
+        ? "All cycles"
+        : `Cycles ${cycles.join(", ")}`;
+  const full = cycles.length === 0 ? "—" : cycles.map(cycleLabel).join(", ");
+
   return (
-    <div className="truncate text-[11px] text-ink-3" title={parts.join(" · ")}>
-      {parts.join(" · ")}
+    <div
+      className="truncate text-[11px] text-ink-3"
+      title={[...head, `Cycles ${full}`].join(" · ")}
+    >
+      {[...head, shown].join(" · ")}
     </div>
   );
 }
