@@ -13,7 +13,7 @@ number, and a fix list ranked by amount.
 
 Syndicate by Maximor, Track 2: Autonomous Office of the CFO.
 
-- Live app: <!-- DEPLOY_URL -->_deploying_
+- Live app: [crossfire-gold.vercel.app](https://crossfire-gold.vercel.app)
 - Demo video: _to come_
 - Devpost: _to come_
 
@@ -111,10 +111,12 @@ http://localhost:3000/api/health, which returns `{ "ok": true, "db": "ok" }`.
 | `pnpm seed` | Regenerate Northwind Labs FY2025: truncates the six data tables, rewrites `data/`, runs the self-check |
 | `pnpm seed:check` | Re-run the seed self-check against the current database without reseeding |
 | `pnpm auditor:run` | One full run on the CLI: `--seed N --name "..." --materiality DOLLARS --samples N --cycles purchases,cash,revenue,payroll --no-llm` |
-| `pnpm accountant` | Defend one sample by hand, e.g. `pnpm accountant invoice 15` |
+| `pnpm accountant` | Defend one sample by hand, e.g. `pnpm accountant invoice:15` |
 | `pnpm test:accountant` | Evidence search and citation checks, including all 10 planted issues |
 | `pnpm auditor:check` | Sampler, question bank, citation, follow-up policy, and run-atomicity checks |
 | `pnpm engine:check` | Drive whole runs through the auditor/accountant engine with the model off: sampling, the follow-up loop, bounded stepping, and the deterministic fallbacks |
+| `pnpm memory:check` | Two real runs with a ruling filed between them, model off: the accepted ruling settles its sample on the second pass, and a run never reads its own rules or a fixture's |
+| `pnpm engine:latency` | The one check that needs the network: times the two model calls per sample against the real endpoint and reports how often the referee is reading the model rather than the fallback |
 | `pnpm referee:check` | Referee data, actions, citations, and the `/api/files` containment checks |
 | `pnpm tracing:check` | Neatlogs span tree, clipping, and the guarantee that tracing cannot fail a run |
 | `pnpm dev` / `pnpm build` / `pnpm start` | Next.js |
@@ -145,28 +147,42 @@ other work can rely on it without reseeding.
 
 ## What improved across iterations
 
-Run 1 on the books above — seed 1, materiality $50,000, 25 samples, all four
-cycles — settled like this on its first pass:
+Two passes over the same books on the hosted database, same inputs both times —
+seed 1, materiality $50,000, 25 samples, all four cycles — with the controller
+ruling on the first pass's escalations before the second one started:
 
-| | Run 1, first pass |
-| --- | --- |
-| Samples | 25 |
-| Defended without a person | 18 |
-| Escalated to the controller | 7 |
-| Coverage | 72% |
+| | Run 1 | Run 2 |
+| --- | --- | --- |
+| Samples | 25 | 25 |
+| Defended without a person | 19 | 21 |
+| Escalated to the controller | 6 | 4 |
+| Exceptions | 3 | 3 |
+| Resolved by memory | 0 | 2 |
+| Coverage | 84% | 88% |
 
-The controller then ruled on the seven escalations: three exceptions totalling
-$2,893.12 with remedies and proposed entries, one accepted with a note, one sent
-back to the accountant with a note saying where to look, and two still open.
-Coverage after those rulings is 76%, and the binder for that run is 36 printed
-pages: a cover sheet, 25 workpapers, the fix list, and the legend.
+Memory carried two of the controller's accept-with-note rulings forward: the
+$28.12 rideshare charge and the $90.00 design retainer, both flagged as
+payments to a counterparty with no contract, came back on the second pass and
+settled themselves by quoting the ruling and citing its `learned_rules` row
+rather than asking the same question again. A third payment of the same kind
+got a needs-more instead, telling the accountant to check the September card
+statement, and the controller was able to close that one on the second pass —
+so the agents alone reached 84% coverage on run 2 against 76% on run 1, and the
+person was left with four escalations instead of six.
 
-<!-- ITERATIONS: run 2 numbers go here once the accountant reads learned_rules.
-     Every ruling that carries judgement is already being written to that table
-     (run id, sample, gap kind, counterparty, remedy, note, verdict); what is
-     not yet wired is the accountant reading them back on the next run. Until
-     then this section states run 1 only rather than claiming an improvement
-     that has not been measured. -->
+Coverage in the table is measured after the controller ruled, which is what the
+comparison panel on the home page shows. The two numbers move together by
+design: an accept-with-note settles the sample it was filed against in the run
+it was filed in, and memory settles the matching sample on the next run, so the
+improvement memory produces shows up as work a person did not have to repeat
+rather than as coverage the first run never reached.
+
+Exceptions are the same three findings both times, because an exception is
+deliberately not carried forward — a run marking its own findings resolved would
+be worthless. They are a $9,200.00 duplicate payment on HPP-2025-03, a
+$2,775.00 overbilling against Stratus Compute's contract rate, and a $99.00 lost
+dispute missing from October's Dodo payout, each with a remedy and a proposed
+entry in the binder.
 
 ## Tracing
 
@@ -199,11 +215,20 @@ made outside a run is buffered and flushed rather than dropped.
 
 Vercel plus a hosted Postgres.
 
-- `DATABASE_URL` — use Supabase's **session pooler** URL (port 5432). The
-  postgres.js client is created with `prepare: false`, so the transaction
-  pooler works too.
+- `DATABASE_URL` — use Supabase's **session pooler** URL (port 5432) with
+  `?idle_timeout=10&connect_timeout=15` on the end. The postgres.js client is
+  created with `prepare: false`, so the transaction pooler connects too, but do
+  not use it from Vercel: the pool is `max: 5`, the home page issues eight
+  queries at once, and postgres.js pipelines the overflow onto a connection the
+  transaction pooler cannot multiplex, so the page hangs rather than answering.
+  The session pooler handles the same eight in one round trip. Its own limit is
+  15 clients, which five connections per serverless instance would exhaust in
+  three cold starts — `idle_timeout` is what returns them.
 - `TENSORMUX_API_KEY` — the model. Without it every run falls back to
-  deterministic prose, which still reads correctly and still cites.
+  deterministic prose, which still reads correctly and still cites. Calls go
+  out at temperature 0 with `reasoning_effort: "none"`, because the model is
+  asked to write over rows that are already found, not to think: that takes a
+  defense from about seven seconds to about one.
 - `NEATLOGS_API_KEY` — tracing. Optional.
 
 Push the schema and the books to the hosted database from your machine
