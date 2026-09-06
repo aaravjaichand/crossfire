@@ -1,9 +1,12 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { CitationCard } from "@/app/_components/citation-card";
+import { Prose } from "@/app/_components/prose";
+import type { ChipAsk } from "@/lib/assistant/types";
 import type { MessageView, SampleView } from "@/lib/referee/data";
-import type { Citation } from "@/lib/referee/evidence-types";
 import { MEMORY_MARK, procedureLabel, STATUS_META } from "./status";
 
 const POLL_MS = 2000;
@@ -65,9 +68,10 @@ export function ExchangePanes({
     };
   }, [runId, sample.id, polling, runVersion, router]);
 
-  const latestEvidence = [...live.thread]
+  const latestAccountant = [...live.thread]
     .reverse()
-    .find((m) => m.role === "accountant" && m.evidence)?.evidence;
+    .find((m) => m.role === "accountant" && m.evidence);
+  const latestEvidence = latestAccountant?.evidence;
   const meta = STATUS_META[live.status];
 
   return (
@@ -105,7 +109,12 @@ export function ExchangePanes({
             <ol className="max-w-3xl space-y-5">
               {live.thread.map((m) => (
                 <li key={`${m.turn}-${m.role}`}>
-                  <Message message={m} />
+                  <Message
+                    message={m}
+                    // Chips only beside the last accountant turn: one beside a
+                    // superseded turn would open the assistant on stale evidence.
+                    chips={m === latestAccountant ? { runId, sampleId: live.id } : undefined}
+                  />
                 </li>
               ))}
             </ol>
@@ -157,8 +166,27 @@ function carriedForward(reason: string | undefined): boolean {
   return (reason ?? "").startsWith("carried forward");
 }
 
+// The assistant's openings a gap can hand it. A closed set: the assistant
+// page maps each to a fixed question and a named tool, never free text.
+const CHIPS: { ask: ChipAsk; label: string }[] = [
+  { ask: "explain_gap", label: "Explain this gap" },
+  { ask: "draft_accept", label: "Draft an accept-with-note" },
+  { ask: "prior_rulings", label: "Similar items in earlier runs" },
+];
+
+function chipHref(runId: string, sampleId: string, ask: ChipAsk): string {
+  return `/assistant?run=${encodeURIComponent(runId)}&sample=${encodeURIComponent(sampleId)}&ask=${ask}`;
+}
+
 // Transcript layout: who spoke in a fixed column, what they said beside it.
-function Message({ message }: { message: MessageView }) {
+function Message({
+  message,
+  chips,
+}: {
+  message: MessageView;
+  /** Set on the last accountant turn only: where the assistant chips go. */
+  chips?: { runId: string; sampleId: string };
+}) {
   const label = ROLE_LABEL[message.role] ?? message.role;
   const isReferee = message.role === "referee";
   return (
@@ -213,65 +241,16 @@ function Message({ message }: { message: MessageView }) {
             ))}
           </ul>
         ) : null}
+        {chips && message.evidence && message.evidence.gaps.length > 0 ? (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {CHIPS.map((chip) => (
+              <Link key={chip.ask} className="btn" href={chipHref(chips.runId, chips.sampleId, chip.ask)}>
+                {chip.label}
+              </Link>
+            ))}
+          </div>
+        ) : null}
       </div>
     </article>
   );
-}
-
-// Inline "[table#id]" citations, the same format the accountant and auditor
-// write. Marking them up keeps the claim and the row it rests on visibly
-// attached, rather than leaving brackets floating in the prose.
-const CITATION = /\[[a-z_]+#\d+(?:,\s*(?:[a-z_]+)?#\d+)*\]/g;
-
-function Prose({ text }: { text: string }) {
-  const parts: React.ReactNode[] = [];
-  let last = 0;
-  for (const match of text.matchAll(CITATION)) {
-    const start = match.index;
-    if (start > last) parts.push(text.slice(last, start));
-    parts.push(
-      <span
-        key={`${start}-${match[0]}`}
-        className="mx-0.5 rounded-[3px] border border-line bg-paper-2 px-1 py-px font-mono text-[11px] text-ink-2"
-      >
-        {match[0].slice(1, -1)}
-      </span>,
-    );
-    last = start + match[0].length;
-  }
-  if (last < text.length) parts.push(text.slice(last));
-  return <>{parts}</>;
-}
-
-function CitationCard({ citation }: { citation: Citation }) {
-  return (
-    <div className="rounded-lg border border-line bg-paper p-3">
-      <div className="flex items-baseline justify-between gap-2">
-        <span className="font-mono text-[11.5px] num">
-          {citation.table}#{citation.id}
-        </span>
-        <span className="font-mono text-[11px] text-ink-3">{citation.field}</span>
-      </div>
-      <div className="mt-1 break-words font-mono text-[12.5px] num">
-        {citation.value === "" ? <span className="text-ink-3">(empty)</span> : citation.value}
-      </div>
-      <p className="mt-1.5 text-[12px] leading-snug text-ink-2">{citation.reason}</p>
-      {citation.filePath ? (
-        <a
-          href={fileUrl(citation.filePath)}
-          target="_blank"
-          rel="noreferrer"
-          className="mt-1.5 inline-block font-mono text-[11px] underline underline-offset-2 hover:text-ink-2"
-        >
-          {citation.filePath.split("/").pop()}
-        </a>
-      ) : null}
-    </div>
-  );
-}
-
-// file_path values are repo-relative, e.g. "data/invoices/STR-2025-05.pdf".
-function fileUrl(filePath: string): string {
-  const relative = filePath.replace(/^\/?data\//, "");
-  return `/api/files/${relative.split("/").map(encodeURIComponent).join("/")}`;
 }

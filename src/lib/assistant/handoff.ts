@@ -11,6 +11,8 @@ import type { DraftVerdict, RulingDraft } from "./types";
 
 export type VerifiedDraft = {
   messageId: number;
+  /** The sample the draft was written about, which is the one it was verified against. */
+  sampleRef: string;
   verdict: DraftVerdict;
   note: string;
   remedy?: Remedy;
@@ -28,6 +30,7 @@ export function verifyDraft(
   if (!sampleId || draft.sampleRef !== sampleId) return null;
   return {
     messageId,
+    sampleRef: draft.sampleRef,
     verdict: draft.verdict,
     note: draft.text,
     ...(draft.remedy ? { remedy: draft.remedy } : {}),

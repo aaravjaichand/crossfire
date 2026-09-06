@@ -3,7 +3,7 @@
  * update on a message — draft.filedDecisionId after a human filed it — is
  * made by the filing action, not by any tool.
  */
-import { asc, desc, eq, sql } from "drizzle-orm";
+import { asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import type { Citation, DefenseSource } from "@/lib/accountant/types";
 import type {
@@ -38,14 +38,18 @@ export async function getThread(threadId: number): Promise<AssistantThreadView |
 
 export async function listThreads(limit = 40): Promise<AssistantThreadView[]> {
   const rows = await db
-    .select({
-      thread: schema.assistantThreads,
-      n: sql<number>`(select count(*)::int from ${schema.assistantMessages} m where m.thread_id = ${schema.assistantThreads.id})`,
-    })
+    .select()
     .from(schema.assistantThreads)
     .orderBy(desc(schema.assistantThreads.updatedAt), desc(schema.assistantThreads.id))
     .limit(limit);
-  return rows.map((r) => threadView(r.thread, r.n));
+  if (rows.length === 0) return [];
+  const counts = await db
+    .select({ threadId: schema.assistantMessages.threadId, n: sql<number>`count(*)::int` })
+    .from(schema.assistantMessages)
+    .where(inArray(schema.assistantMessages.threadId, rows.map((r) => r.id)))
+    .groupBy(schema.assistantMessages.threadId);
+  const byThread = new Map(counts.map((c) => [c.threadId, Number(c.n)]));
+  return rows.map((r) => threadView(r, byThread.get(r.id) ?? 0));
 }
 
 export async function listMessages(threadId: number): Promise<AssistantMessageView[]> {
