@@ -2,16 +2,19 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { DEFAULT_MATERIALITY_CENTS, DEFAULT_SAMPLE_SIZE } from "@/lib/engine/inputs";
 import { startRun } from "@/lib/engine/start";
 import { CYCLES, DEFAULT_CYCLE_IDS } from "@/lib/referee/cycles";
 
 const GENERIC_FAILURE = "The run could not be started. Try again.";
-// $50,000, not a conventional-looking $5,000: nothing in these books exceeds
-// $49,900, so a $5,000 threshold makes the materiality-first rule test 98
-// records in every run and starve the Dodo cycle. Replaced by
-// DEFAULT_MATERIALITY_CENTS from src/lib/engine/inputs.ts once that lands.
-const DEFAULT_MATERIALITY = "50000";
-const DEFAULT_SAMPLE_SIZE = "25";
+// Both defaults come from the engine, so the form cannot drift from what a run
+// started any other way would use. Materiality is $50,000 rather than a
+// conventional-looking $5,000 because nothing in these books exceeds $49,900:
+// a lower threshold forces almost every record into the run and starves the
+// Dodo cycle. Shown in dollars, sent in cents.
+const DEFAULT_MATERIALITY = String(DEFAULT_MATERIALITY_CENTS / 100);
+// normalizeRunInput falls back to 1 for a missing seed; the field shows the
+// same value rather than leaving the controller to guess what they will get.
 const DEFAULT_SEED = "1";
 
 /**
@@ -27,8 +30,8 @@ export function NewRunForm() {
 
   const [name, setName] = useState("");
   const [materiality, setMateriality] = useState(DEFAULT_MATERIALITY);
-  const [sampleSize, setSampleSize] = useState(DEFAULT_SAMPLE_SIZE);
-  const [cycles, setCycles] = useState<string[]>(DEFAULT_CYCLE_IDS);
+  const [sampleSize, setSampleSize] = useState(String(DEFAULT_SAMPLE_SIZE));
+  const [cycles, setCycles] = useState<string[]>([...DEFAULT_CYCLE_IDS]);
   const [seed, setSeed] = useState(DEFAULT_SEED);
 
   function toggleCycle(id: string) {
@@ -45,21 +48,25 @@ export function NewRunForm() {
       return;
     }
     startTransition(async () => {
+      // startRun throws rather than returning a failure: it draws the sample
+      // and writes the run before it returns, and anything that goes wrong in
+      // there is a server fault, not a rejected input. The thrown message is
+      // not shown — in production Next replaces it with an opaque digest, so
+      // it would tell the controller nothing.
       try {
-        const result = await startRun({
+        const started = await startRun({
           name: name.trim(),
           materiality: Math.round(dollars * 100),
           sampleSize: Number(sampleSize),
           cycles,
           seed: Number(seed),
         });
-        if (!result.ok) {
-          setError(result.message);
-          return;
-        }
         setOpen(false);
-        router.push(`/audit/${result.runId}`);
-      } catch {
+        // The run exists with all its samples by now; the model work runs on
+        // behind it, and the run screen polls audit_runs.progress for that.
+        router.push(`/audit/${started.runId}`);
+      } catch (error) {
+        console.error("[new run] starting a run failed", error);
         setError(GENERIC_FAILURE);
       }
     });

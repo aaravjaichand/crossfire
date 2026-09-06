@@ -1,3 +1,4 @@
+import type { AuditProcedure } from "@/lib/auditor/questions";
 import type { SampleStatus } from "@/lib/referee/data";
 import type { Verdict } from "@/lib/referee/verdicts";
 
@@ -29,3 +30,20 @@ export const TYPE_LABEL: Record<string, string> = {
   bank_transaction: "Bank",
   dodo_transaction: "Dodo",
 };
+
+// The engine stores the procedure id; a controller should read the name of the
+// procedure, not its slug. Typed against AuditProcedure on purpose: adding a
+// procedure without a label here is a build error rather than a raw
+// "three_way_match" appearing on screen.
+export const PROCEDURE_LABEL: Record<AuditProcedure, string> = {
+  three_way_match: "Three-way match",
+  cutoff: "Cutoff",
+  unrecorded_liabilities: "Unrecorded liabilities",
+  bank_rec: "Bank reconciliation",
+  revenue_tie_out: "Revenue tie-out",
+  approval_control: "Approval control",
+};
+
+export function procedureLabel(id: string): string {
+  return PROCEDURE_LABEL[id as AuditProcedure] ?? id;
+}

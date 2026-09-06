@@ -15,6 +15,7 @@ import {
 import { CoverageBar } from "./_components/coverage-bar";
 import { ExchangePanes } from "./_components/exchange-panes";
 import { RefereeControls } from "./_components/referee-controls";
+import { RunProgress } from "./_components/run-progress";
 import { SampleList } from "./_components/sample-list";
 
 export const dynamic = "force-dynamic";
@@ -62,8 +63,13 @@ export default async function AuditRunPage({
           <RunParameters run={run} sampleCount={total} />
         </div>
 
-        <div className="hidden md:block">
+        <div className="hidden items-center gap-4 md:flex">
           <CoverageBar defended={defended} total={total} percent={percent} />
+          <RunProgress
+            status={run.status}
+            progress={run.progress}
+            total={run.sampleCount ?? total}
+          />
         </div>
 
         <div className="flex shrink-0 items-center gap-3">
@@ -108,7 +114,7 @@ export default async function AuditRunPage({
 function RunParameters({ run, sampleCount }: { run: RunView; sampleCount: number }) {
   const parts = [
     `Materiality ${run.materiality === undefined ? "—" : formatMoney(run.materiality / 100)}`,
-    `${run.sampleSize ?? sampleCount} samples`,
+    `${run.sampleCount ?? sampleCount} samples`,
     `Cycles ${run.cycles?.map(cycleLabel).join(", ") ?? "—"}`,
   ];
   return (

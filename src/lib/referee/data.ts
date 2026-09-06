@@ -17,11 +17,7 @@ export type MessageView = {
   role: MessageRole;
   content: string;
   evidence?: EvidenceBundle;
-  /**
-   * The audit procedure the auditor's question came from. Read defensively off
-   * audit_exchanges: the column is Worker A's and may not exist yet, in which
-   * case the screen shows nothing rather than a placeholder procedure.
-   */
+  /** The audit procedure the question came from. Set on auditor turns only. */
   procedure?: string;
 };
 
@@ -50,13 +46,18 @@ export type RunView = {
   kind: "mock" | "real";
   samples: SampleView[];
   /**
-   * The run's own parameters. All three are Worker A's columns on audit_runs
-   * and are read defensively, so they are undefined until that work lands and
-   * the header renders an em dash in their place.
+   * The engine's columns on audit_runs. Undefined for the mock run, which has
+   * no such row — the header renders an em dash in their place.
    */
   materiality?: number;
   sampleSize?: number;
   cycles?: string[];
+  /** running | complete | failed. Drives the progress poll on the run screen. */
+  status?: string;
+  /** Samples the engine has settled so far, against sampleCount. */
+  progress?: number;
+  /** Samples actually drawn; materiality can push this past sampleSize. */
+  sampleCount?: number;
 };
 
 

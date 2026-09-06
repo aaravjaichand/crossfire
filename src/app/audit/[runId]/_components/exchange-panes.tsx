@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import type { MessageView, SampleView } from "@/lib/referee/data";
 import type { Citation } from "@/lib/referee/evidence-types";
-import { STATUS_META } from "./status";
+import { procedureLabel, STATUS_META } from "./status";
 
 const POLL_MS = 2000;
 
@@ -159,7 +159,7 @@ function Message({ message }: { message: MessageView }) {
       <div>
         {message.procedure ? (
           <div className="mb-1 text-[11px] text-ink-3" title="Audit procedure this question came from">
-            Procedure · {message.procedure}
+            Procedure · {procedureLabel(message.procedure)}
           </div>
         ) : null}
         <p className={`text-[13px] leading-relaxed ${isReferee ? "text-ink-2" : "text-ink"}`}>
