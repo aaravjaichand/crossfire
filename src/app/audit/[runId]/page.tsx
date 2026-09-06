@@ -1,8 +1,21 @@
 import Link from "next/link";
-import { coverage, getRun, parseSampleId, runVersion, type RunView } from "@/lib/referee/data";
+import { proposeAdjustment } from "@/lib/referee/adjustments";
+import { cycleLabel } from "@/lib/referee/cycles";
+import {
+  coverage,
+  formatMoney,
+  getRun,
+  latestEvidence,
+  parseSampleId,
+  primaryGap,
+  runVersion,
+  type RunView,
+  type SampleView,
+} from "@/lib/referee/data";
 import { CoverageBar } from "./_components/coverage-bar";
 import { ExchangePanes } from "./_components/exchange-panes";
 import { RefereeControls } from "./_components/referee-controls";
+import { RunProgress } from "./_components/run-progress";
 import { SampleList } from "./_components/sample-list";
 
 export const dynamic = "force-dynamic";
@@ -33,24 +46,41 @@ export default async function AuditRunPage({
   const selected = run.samples.find((sample) => sample.id === s) ?? run.samples[0];
   const ref = selected ? parseSampleId(selected.id) : null;
   const { defended, total, percent } = coverage(run);
+  // The entry is deterministic and cheap, so it is computed here and handed to
+  // the controls as a plain prop rather than fetched when the panel opens.
+  const entry = selected ? adjustmentFor(selected) : null;
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-paper">
       <header className="flex h-12 shrink-0 items-center justify-between gap-6 border-b border-line pl-[var(--shell-header-left,1rem)] pr-4">
-        <div className="flex min-w-0 items-baseline gap-3">
-          <h1 className="truncate text-[13.5px] font-semibold tracking-tight">{run.name}</h1>
-          <span className="shrink-0 font-mono text-[11px] text-ink-3 num">
-            {run.kind === "mock" ? "walkthrough" : `run ${run.id}`}
-          </span>
+        <div className="min-w-0">
+          <div className="flex min-w-0 items-baseline gap-3">
+            <h1 className="truncate text-[13.5px] font-semibold tracking-tight">{run.name}</h1>
+            <span className="shrink-0 font-mono text-[11px] text-ink-3 num">
+              {run.kind === "mock" ? "walkthrough" : `run ${run.id}`}
+            </span>
+          </div>
+          <RunParameters run={run} sampleCount={total} />
         </div>
 
-        <div className="hidden md:block">
+        <div className="hidden items-center gap-4 md:flex">
           <CoverageBar defended={defended} total={total} percent={percent} />
+          <RunProgress
+            status={run.status}
+            progress={run.progress}
+            total={run.sampleCount ?? total}
+          />
         </div>
 
         <div className="flex shrink-0 items-center gap-3">
-          {selected && ref ? (
-            <RefereeControls runId={run.id} sampleType={ref.type} sampleId={ref.id} />
+          {selected && ref && entry ? (
+            <RefereeControls
+              runId={run.id}
+              sampleType={ref.type}
+              sampleId={ref.id}
+              entry={entry}
+              ruling={selected.ruling}
+            />
           ) : (
             <span className="text-[12px] text-ink-3">No sample selected</span>
           )}
@@ -74,6 +104,37 @@ export default async function AuditRunPage({
       </div>
     </div>
   );
+}
+
+/**
+ * Materiality, sample size, and cycles are Worker A's columns on audit_runs.
+ * Until that work lands they read undefined and show an em dash, so the header
+ * has the same shape before and after.
+ */
+function RunParameters({ run, sampleCount }: { run: RunView; sampleCount: number }) {
+  const parts = [
+    `Materiality ${run.materiality === undefined ? "—" : formatMoney(run.materiality / 100)}`,
+    `${run.sampleCount ?? sampleCount} samples`,
+    `Cycles ${run.cycles?.map(cycleLabel).join(", ") ?? "—"}`,
+  ];
+  return (
+    <div className="truncate text-[11px] text-ink-3" title={parts.join(" · ")}>
+      {parts.join(" · ")}
+    </div>
+  );
+}
+
+/** Never null for a sample: primaryGap falls back to the "other" kind. */
+function adjustmentFor(sample: SampleView) {
+  const gap = primaryGap(sample);
+  return proposeAdjustment({
+    gapKind: gap.kind,
+    sampleType: sample.type,
+    sampleId: Number(sample.id.split(":")[1]),
+    sampleAmount: sample.amount,
+    citations: latestEvidence(sample)?.citations ?? [],
+    gapDescription: gap.description,
+  });
 }
 
 function RunNotFound({ runId }: { runId: string }) {

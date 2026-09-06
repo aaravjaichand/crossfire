@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { count } from "drizzle-orm";
 import { db, schema } from "@/db";
+import { NewRunForm } from "@/app/_components/new-run-form";
 import { recentRuns, type RunSummary } from "@/lib/referee/runs";
 
 export const dynamic = "force-dynamic";
@@ -29,17 +30,18 @@ export default async function Home() {
     <main className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto max-w-5xl px-8 py-7">
         <header className="flex items-end justify-between gap-6">
-          <div>
+          <div className="max-w-2xl">
             <h1 className="text-[20px] font-semibold tracking-tight">Audit runs</h1>
             <p className="mt-1 text-[12.5px] text-ink-2">
               Northwind Labs, FY2025. Each run samples the books, asks for evidence, and waits
               for your call on every gap.
             </p>
           </div>
-          <Link href="/audit/mock" className="btn">
-            Open walkthrough
-          </Link>
         </header>
+
+        <section className="mt-5">
+          <NewRunForm />
+        </section>
 
         <section className="mt-6">
           {runs.length === 0 ? <EmptyRuns /> : <RunsTable runs={runs} />}
@@ -78,7 +80,7 @@ function RunsTable({ runs }: { runs: RunSummary[] }) {
             <th className="py-2 pr-4 text-right font-medium">Samples</th>
             <th className="py-2 pr-4 text-right font-medium">Defended</th>
             <th className="py-2 pr-4 text-right font-medium">Gaps</th>
-            <th className="py-2 pr-4 text-right font-medium">Conceded</th>
+            <th className="py-2 pr-4 text-right font-medium">Exceptions</th>
             <th className="py-2 pr-4 text-right font-medium">Open</th>
             <th className="w-44 py-2 font-medium">Coverage</th>
           </tr>
@@ -102,7 +104,7 @@ function RunsTable({ runs }: { runs: RunSummary[] }) {
                 <Num value={run.total} />
                 <Num value={run.defended} />
                 <Num value={run.gap} />
-                <Num value={run.conceded} />
+                <Num value={run.exceptions} />
                 <Num value={run.open} muted />
                 <td className="py-2.5">
                   <div className="flex items-center gap-2">
@@ -134,7 +136,8 @@ function EmptyRuns() {
     <div className="rounded-[4px] border border-line px-5 py-6">
       <p className="text-[13px] font-medium">No audit runs yet</p>
       <p className="mt-1 text-[12.5px] text-ink-2">
-        Create one from the repo root, then it appears here and in the sidebar.
+        Start one with New run above, or from the repo root; either way it appears here and in
+        the sidebar.
       </p>
       <pre className="mt-3 inline-block rounded-[4px] bg-paper-2 px-3 py-2 font-mono text-[12px]">
         pnpm auditor:run --seed 7 --name &quot;First pass&quot;

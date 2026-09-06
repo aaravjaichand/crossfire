@@ -52,6 +52,7 @@ export async function buildRealRun(runDbId: number): Promise<RunView | null> {
     const message: MessageView = { turn: row.turn, role, content: row.content };
     const evidence = row.evidence === null ? undefined : parseEvidenceBundle(row.evidence);
     if (evidence) message.evidence = evidence;
+    if (row.procedure) message.procedure = row.procedure;
     const list = threads.get(row.sampleId);
     if (list) list.push(message);
     else threads.set(row.sampleId, [message]);
@@ -79,7 +80,21 @@ export async function buildRealRun(runDbId: number): Promise<RunView | null> {
     });
   }
 
-  return { id: String(run.id), name: run.name, kind: "real", samples };
+  // These are the engine's columns on audit_runs, written when the run is
+  // prepared. status and progress are what the run screen polls while a run is
+  // still working through its samples.
+  return {
+    id: String(run.id),
+    name: run.name,
+    kind: "real",
+    samples,
+    status: run.status,
+    progress: run.progress,
+    sampleCount: run.sampleCount,
+    materiality: run.materiality,
+    sampleSize: run.sampleSize,
+    cycles: run.cycles,
+  };
 }
 
 /**

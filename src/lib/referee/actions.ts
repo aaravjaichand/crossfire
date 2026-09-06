@@ -1,33 +1,37 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { normaliseNote, recordDecision, type DecisionInput, type DecisionResult } from "./decide";
+import { recordDecision, type DecisionInput, type DecisionResult } from "./decide";
+import { isVerdict } from "./verdicts";
 
 export type { DecisionInput, DecisionResult } from "./decide";
 
-export async function approve(input: DecisionInput): Promise<DecisionResult> {
-  return run(input, "approve", null);
-}
+export type VerdictSubmission = {
+  verdict: string;
+  note?: string;
+  remedy?: string;
+};
 
-export async function redirect(input: DecisionInput, note: string): Promise<DecisionResult> {
-  const trimmed = normaliseNote(note);
-  if (!trimmed) {
-    return { ok: false, message: "A redirect needs a note telling the accountant where to look." };
-  }
-  return run(input, "redirect", trimmed);
-}
-
-export async function concede(input: DecisionInput): Promise<DecisionResult> {
-  return run(input, "concede", null);
-}
-
-async function run(
+/**
+ * One action for all four verdicts. The client sends what the controller
+ * chose; decide.ts is what decides whether that verdict is allowed to carry a
+ * note or a remedy, so a hand-built request cannot file a remedy against a
+ * sufficient verdict or skip a required note.
+ */
+export async function submitVerdict(
   input: DecisionInput,
-  decision: "approve" | "redirect" | "concede",
-  note: string | null,
+  submission: VerdictSubmission,
 ): Promise<DecisionResult> {
-  const result = await recordDecision(input, decision, note);
-  // Revalidating the run key rather than the requested path keeps a decision
+  if (!isVerdict(submission?.verdict)) {
+    return { ok: false, message: "That is not one of the four verdicts." };
+  }
+
+  const result = await recordDecision(input, submission.verdict, {
+    note: submission.note,
+    remedy: submission.remedy,
+  });
+
+  // Revalidating the run key rather than the requested path keeps a ruling
   // reached through an alias of the mock run from invalidating some other page.
   if (result.ok) revalidatePath(`/audit/${result.runKey}`);
   return result;

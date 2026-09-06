@@ -110,7 +110,9 @@ export const auditSamples = pgTable("audit_samples", {
   // Set by the referee when a ruling sends a sample back for more work: the
   // controller's note, which the engine appends to the accountant's search
   // context on the next pass and then clears. Owned by the referee module;
-  // declared here so the engine can read and clear it.
+  // declared here so the engine can read and clear it. Written only by the
+  // needs_more verdict; every other verdict clears it in the same transaction
+  // that files the ruling.
   pendingFollowUp: text("pending_follow_up"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
@@ -149,14 +151,35 @@ export const refereeDecisions = pgTable("referee_decisions", {
   // bank_transaction | invoice | dodo_transaction
   sampleType: text("sample_type").notNull(),
   sampleId: integer("sample_id").notNull(),
-  // approve | redirect | concede
+  // sufficient | needs_more | exception | accepted_with_note
   decision: text("decision").notNull(),
+  // recover_cash | post_entry | fix_control | investigate. Set on exception
+  // verdicts and null on the rest.
+  remedy: text("remedy"),
   note: text("note"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+// One row per controller ruling that carries judgement the accountant can
+// reuse: every exception, accepted_with_note, and needs_more verdict. A
+// sufficient verdict teaches nothing and writes nothing.
+//
+// run_id is text for the same reason refereeDecisions.run_id is: the mock run
+// has no audit_runs row.
 export const learnedRules = pgTable("learned_rules", {
   id: serial("id").primaryKey(),
+  runId: text("run_id").notNull(),
+  // bank_transaction | invoice | dodo_transaction
+  sampleType: text("sample_type").notNull(),
+  sampleId: integer("sample_id").notNull(),
+  // The GapKind the accountant admitted on its last turn, or "other".
+  gapKind: text("gap_kind").notNull(),
+  // Vendor name, bank counterparty, or Dodo transaction type.
+  counterparty: text("counterparty").notNull(),
+  remedy: text("remedy"),
+  note: text("note"),
+  // sufficient | needs_more | exception | accepted_with_note
+  verdict: text("verdict").notNull(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
