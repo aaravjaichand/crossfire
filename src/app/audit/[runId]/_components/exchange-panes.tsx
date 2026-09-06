@@ -138,10 +138,13 @@ export function ExchangePanes({
   );
 }
 
+// The database role stays "referee" — it is a column value, and renaming it
+// would rewrite history that is already on file. Only the label changes, to
+// match the binder and the rest of the product.
 const ROLE_LABEL: Record<string, string> = {
   auditor: "Auditor",
   accountant: "Accountant",
-  referee: "Referee",
+  referee: "Controller",
 };
 
 // Transcript layout: who spoke in a fixed column, what they said beside it.
