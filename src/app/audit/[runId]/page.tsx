@@ -63,9 +63,10 @@ export default async function AuditRunPage({
           <RunParameters run={run} sampleCount={total} />
         </div>
 
-        <div className="hidden items-center gap-4 md:flex">
+        <div className="hidden shrink-0 items-center gap-4 md:flex">
           <CoverageBar defended={defended} total={total} percent={percent} />
           <RunProgress
+            runId={run.id}
             status={run.status}
             progress={run.progress}
             total={run.sampleCount ?? total}
