@@ -11,7 +11,10 @@
  *      whole EvidenceBundle.
  *   3. Ask the deterministic follow-up policy what to do with that bundle:
  *        accept    -> the sample is defended, done.
- *        escalate  -> the sample is a gap, and only gaps reach the controller.
+ *        escalate  -> the sample is a gap, and only gaps reach the controller,
+ *                     unless run memory already holds their ruling on this
+ *                     counterparty and this kind of gap, in which case the
+ *                     sample is defended with resolution = "memory".
  *        push_back -> persist the auditor's follow-up as the next turn and go
  *                     back to step 2 with that follow-up in the accountant's
  *                     context, up to MAX_TURNS turns.
@@ -28,6 +31,15 @@
  *     produce the same answer a third time, so the sample escalates to the
  *     controller instead of burning a turn. The follow-up and the accountant's
  *     confirmation are both still on the record.
+ *
+ * Run memory sits either side of the accountant, and is plain code both times
+ * (src/lib/accountant/memory.ts). Before the first search, the controller's
+ * "needs more" notes for this counterparty join the search context so this
+ * pass answers what the last one was sent back for. After the first defense,
+ * an "accept with note" ruling on the same counterparty and the same gap kind
+ * settles the sample instead of sending the controller a question they have
+ * already answered — on the record, as an accountant turn quoting the ruling
+ * and citing it.
  *
  * Nothing here decides anything with a model: defend() is the only model call,
  * and it only writes prose over rows that were already found.
@@ -51,6 +63,15 @@
 import { asc, eq, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { defend } from "@/lib/accountant";
+import {
+  acceptedRuleFor,
+  buildMemoryTurn,
+  consultedRules,
+  loadSampleMemory,
+  MEMORY_RESOLUTION,
+  memorySearchNotes,
+  withConsultedRules,
+} from "@/lib/accountant/memory";
 import { withSampleCitation } from "@/lib/auditor/citation";
 import { loadSampleDetail } from "@/lib/auditor/detail";
 import type { EvidenceBundle, SampleType } from "@/lib/auditor/evidence-types";
@@ -89,12 +110,16 @@ export type SampleOutcome = {
   turns: number;
   citations: number;
   gaps: number;
+  /** audit_samples.resolution: "memory" when a remembered ruling settled it. */
+  resolution: string | null;
 };
 
 export type RunAuditResult = {
   runId: number;
   processed: number;
   defended: number;
+  /** Of `defended`, the ones a remembered controller ruling settled. */
+  resolvedByMemory: number;
   gaps: number;
   failed: number;
   outcomes: SampleOutcome[];
@@ -145,6 +170,7 @@ export async function runAudit(
     runId,
     processed: outcomes.length,
     defended: outcomes.filter((o) => o.status === "defended").length,
+    resolvedByMemory: outcomes.filter((o) => o.resolution === MEMORY_RESOLUTION).length,
     gaps: outcomes.filter((o) => o.status === "gap").length,
     failed,
     outcomes,
@@ -282,7 +308,7 @@ async function claimNextSample(runId: number): Promise<SampleRow | null> {
     returning id, run_id as "runId", sample_type as "sampleType", sample_id as "sampleId",
               amount, risk_score as "riskScore", risk_reasons as "riskReasons", status,
               pending_follow_up as "pendingFollowUp", claimed_at as "claimedAt",
-              created_at as "createdAt"
+              resolution, created_at as "createdAt"
   `);
   return rows[0] ?? null;
 }
@@ -330,6 +356,15 @@ async function workSample(runId: number, sample: SampleRow): Promise<SampleOutco
   // question for this pass, so it leads the accountant's context.
   if (sample.pendingFollowUp) followUps.push(sample.pendingFollowUp.trim());
 
+  // Run memory, read before a single row is gathered: everything the
+  // controller has ruled about this counterparty in an earlier run. The
+  // "needs more" notes join the search context here so the first defense of
+  // this pass already answers what the last pass was sent back for; the
+  // accepted rulings are held until the gap kind is known, below.
+  const memory = await loadSampleMemory(ref, { runId });
+  followUps.push(...memorySearchNotes(memory));
+  const recalled = consultedRules(memory);
+
   let turn = await openTurn(runId, sample, exchanges, procedure);
 
   let previousSignature: string | null = null;
@@ -337,7 +372,7 @@ async function workSample(runId: number, sample: SampleRow): Promise<SampleOutco
   let last: EvidenceBundle | null = null;
 
   for (let round = 1; round <= MAX_TURNS; round++) {
-    const bundle = await defend(ref, { followUps });
+    const bundle = withConsultedRules(await defend(ref, { followUps }), recalled);
     last = bundle;
     accountantTurns++;
     await db.insert(schema.auditExchanges).values({
@@ -353,6 +388,38 @@ async function workSample(runId: number, sample: SampleRow): Promise<SampleOutco
     if (decision.action === "accept") {
       return settle(sample, "defended", accountantTurns, bundle);
     }
+
+    // The accountant could not close this on the evidence. Before it goes to
+    // the controller, check whether the controller has already ruled on this
+    // counterparty and this kind of gap: if so, asking them again would be
+    // asking a question they have answered. Checked on the first defense
+    // only — gatherEvidence is deterministic, so a later round cannot produce
+    // a gap kind this one did not.
+    if (round === 1) {
+      const gapKind = bundle.gaps[0]?.kind ?? "other";
+      const rule = acceptedRuleFor(memory, ref, gapKind);
+      if (rule) {
+        turn++;
+        accountantTurns++;
+        const memoryTurn = buildMemoryTurn(ref, rule, gapKind);
+        await db.insert(schema.auditExchanges).values({
+          runId,
+          sampleId: sample.id,
+          turn,
+          role: "accountant",
+          content: memoryTurn.content,
+          evidence: memoryTurn.evidence,
+        });
+        return settle(
+          sample,
+          "defended",
+          accountantTurns,
+          memoryTurn.evidence,
+          MEMORY_RESOLUTION,
+        );
+      }
+    }
+
     if (decision.action === "escalate") {
       return settle(sample, "gap", accountantTurns, bundle);
     }
@@ -500,13 +567,17 @@ async function settle(
   status: "defended" | "gap",
   turns: number,
   bundle: EvidenceBundle | null,
+  resolution: string | null = null,
 ): Promise<SampleOutcome> {
   await db
     .update(schema.auditSamples)
     // The note is consumed by this pass: clearing it is what stops the sample
     // being picked up again on the next run over the same run id. The claim
     // goes with it, so a sample the controller later reopens starts unclaimed.
-    .set({ status, pendingFollowUp: null, claimedAt: null })
+    // resolution is always written, null included: a sample the controller
+    // reopens and the accountant then closes on its own evidence must not keep
+    // the marker from the pass before.
+    .set({ status, pendingFollowUp: null, claimedAt: null, resolution })
     .where(eq(schema.auditSamples.id, sample.id));
 
   // Recomputed rather than incremented. An increment is correct only if every
@@ -527,5 +598,6 @@ async function settle(
     turns,
     citations: bundle?.citations.length ?? 0,
     gaps: bundle?.gaps.length ?? 0,
+    resolution,
   };
 }
