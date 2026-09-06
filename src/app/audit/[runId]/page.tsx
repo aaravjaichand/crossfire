@@ -7,33 +7,36 @@ import {
   formatMoney,
   getRun,
   latestEvidence,
-  parseSampleId,
+  MOCK_RUN_ID,
   primaryGap,
+  resolveRunId,
   runVersion,
   type RunView,
   type SampleView,
 } from "@/lib/referee/data";
 import { CoverageBar } from "./_components/coverage-bar";
-import { ExchangePanes } from "./_components/exchange-panes";
-import { RefereeControls } from "./_components/referee-controls";
 import { RunProgress } from "./_components/run-progress";
-import { SampleList } from "./_components/sample-list";
+import { RunWorkspace } from "./_components/run-workspace";
 
 export const dynamic = "force-dynamic";
 
 export default async function AuditRunPage({
   params,
-  searchParams,
 }: {
   params: Promise<{ runId: string }>;
-  searchParams: Promise<{ s?: string }>;
 }) {
   const { runId } = await params;
-  const { s } = await searchParams;
 
   let run: RunView | null;
+  let memoryResolved: string[];
   try {
-    run = await getRun(runId);
+    // Which defended samples a controller ruling from an earlier run settled,
+    // read from audit_samples.resolution rather than inferred from the
+    // transcript. Empty for the walkthrough run, which has no such rows. It
+    // only needs the run key, so it does not wait for the run to load.
+    const [loaded, resolved] = await Promise.all([getRun(runId), memoryResolvedIds(runKeyOf(runId))]);
+    run = loaded;
+    memoryResolved = [...resolved];
   } catch (error) {
     // The reason belongs in the server log, not on the referee's screen: it
     // carries table names, connection details, and whatever the driver felt
@@ -51,21 +54,23 @@ export default async function AuditRunPage({
   // first sample of the run.
   const gaps = run.samples.filter((sample) => sample.status === "gap");
   const opening = gaps.find((sample) => !sample.ruling) ?? gaps[0] ?? run.samples[0];
-  const selected = run.samples.find((sample) => sample.id === s) ?? opening;
-  const ref = selected ? parseSampleId(selected.id) : null;
   const { defended, total, percent } = coverage(run);
-  // Which of those defended samples a controller ruling from an earlier run
-  // settled, read from audit_samples.resolution rather than inferred from the
-  // transcript. Empty for the walkthrough run, which has no such rows.
-  const memoryResolved = [...(await memoryResolvedIds(run.id))];
-  // The entry is deterministic and cheap, so it is computed here and handed to
-  // the controls as a plain prop rather than fetched when the panel opens.
-  const entry = selected ? adjustmentFor(selected) : null;
+  // The entries are deterministic and cheap, so they are computed here for
+  // every sample and handed down as plain props: switching samples then needs
+  // nothing from the server.
+  const entries = Object.fromEntries(run.samples.map((sample) => [sample.id, adjustmentFor(sample)]));
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-paper">
-      <header className="flex h-12 shrink-0 items-center justify-between gap-6 border-b border-line pl-[var(--shell-header-left,1rem)] pr-4">
-        <div className="min-w-0">
+    <RunWorkspace
+      key={run.id}
+      runId={run.id}
+      runVersion={runVersion(run)}
+      samples={run.samples}
+      entries={entries}
+      memoryResolved={memoryResolved}
+      fallbackId={opening?.id ?? null}
+      headerLead={
+        <div key="lead" className="min-w-0">
           <div className="flex min-w-0 items-baseline gap-3">
             <h1 className="truncate text-[13.5px] font-semibold tracking-tight">{run.name}</h1>
             <span className="shrink-0 font-mono text-[11px] text-ink-3 num">
@@ -74,8 +79,9 @@ export default async function AuditRunPage({
           </div>
           <RunParameters run={run} sampleCount={total} />
         </div>
-
-        <div className="hidden shrink-0 items-center gap-4 md:flex">
+      }
+      headerMiddle={
+        <div key="middle" className="hidden shrink-0 items-center gap-4 md:flex">
           <CoverageBar
             defended={defended}
             total={total}
@@ -92,44 +98,15 @@ export default async function AuditRunPage({
             Binder
           </Link>
         </div>
-
-        <div className="flex shrink-0 items-center gap-3">
-          {selected && ref && entry ? (
-            <RefereeControls
-              runId={run.id}
-              sampleType={ref.type}
-              sampleId={ref.id}
-              entry={entry}
-              ruling={selected.ruling}
-            />
-          ) : (
-            <span className="text-[12px] text-ink-3">No sample selected</span>
-          )}
-        </div>
-      </header>
-
-      <div className="grid min-h-0 flex-1 gap-3 overflow-x-auto bg-paper-2 p-3 grid-cols-[16rem_minmax(20rem,1fr)] lg:grid-cols-[17rem_minmax(22rem,1fr)_17rem] xl:grid-cols-[20rem_minmax(26rem,1fr)_21rem]">
-        <SampleList
-          runId={run.id}
-          samples={run.samples}
-          selectedId={selected?.id ?? ""}
-          memoryResolved={memoryResolved}
-        />
-        {selected ? (
-          <ExchangePanes
-            key={`${selected.id}:${selected.status}:${selected.thread.length}`}
-            runId={run.id}
-            sample={selected}
-            runVersion={runVersion(run)}
-          />
-        ) : (
-          <div className="col-span-2 grid place-items-center text-[13px] text-ink-3">
-            This run has no samples.
-          </div>
-        )}
-      </div>
-    </div>
+      }
+    />
   );
+}
+
+/** The key getRun files the run under, before the run itself is loaded. */
+function runKeyOf(runId: string): string {
+  const resolved = resolveRunId(runId);
+  return resolved.kind === "real" ? String(resolved.id) : MOCK_RUN_ID;
 }
 
 /**

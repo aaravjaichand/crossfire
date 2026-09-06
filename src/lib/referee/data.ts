@@ -95,11 +95,15 @@ export function resolveRunId(runId: string): { kind: "real"; id: number } | { ki
 /** null means the caller asked for a real run id that does not exist. */
 export async function getRun(runId: string): Promise<RunView | null> {
   const resolved = resolveRunId(runId);
-  const run =
-    resolved.kind === "real" ? await buildRealRun(resolved.id) : await buildMockRun(MOCK_RUN_ID);
+  // The run key decisions are filed under is known before the run is built, so
+  // the two reads overlap instead of queueing.
+  const runKey = resolved.kind === "real" ? String(resolved.id) : MOCK_RUN_ID;
+  const [run, decisions] = await Promise.all([
+    resolved.kind === "real" ? buildRealRun(resolved.id) : buildMockRun(MOCK_RUN_ID),
+    loadDecisions(runKey),
+  ]);
   if (!run) return null;
 
-  const decisions = await loadDecisions(run.id);
   return {
     ...run,
     samples: run.samples.map((s) => applyDecisions(run.kind, s, decisions.get(s.id))),

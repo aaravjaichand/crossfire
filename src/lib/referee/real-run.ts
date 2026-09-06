@@ -24,25 +24,23 @@ export type RealSample = {
 };
 
 export async function buildRealRun(runDbId: number): Promise<RunView | null> {
-  const [run] = await db
-    .select()
-    .from(schema.auditRuns)
-    .where(eq(schema.auditRuns.id, runDbId));
+  // All three key on the run id alone, so they go out together: the database
+  // sits in another region from the function and every round trip is paid in
+  // full on each sample click.
+  const [[run], sampleRows, exchangeRows] = await Promise.all([
+    db.select().from(schema.auditRuns).where(eq(schema.auditRuns.id, runDbId)),
+    db
+      .select()
+      .from(schema.auditSamples)
+      .where(eq(schema.auditSamples.runId, runDbId))
+      .orderBy(asc(schema.auditSamples.id)),
+    db
+      .select()
+      .from(schema.auditExchanges)
+      .where(eq(schema.auditExchanges.runId, runDbId))
+      .orderBy(asc(schema.auditExchanges.turn), asc(schema.auditExchanges.id)),
+  ]);
   if (!run) return null;
-
-  const sampleRows = await db
-    .select()
-    .from(schema.auditSamples)
-    .where(eq(schema.auditSamples.runId, run.id))
-    .orderBy(asc(schema.auditSamples.id));
-
-  const exchangeRows = sampleRows.length
-    ? await db
-        .select()
-        .from(schema.auditExchanges)
-        .where(eq(schema.auditExchanges.runId, run.id))
-        .orderBy(asc(schema.auditExchanges.turn), asc(schema.auditExchanges.id))
-    : [];
 
   // Keyed by audit_samples.id, which is what audit_exchanges.sample_id holds.
   const threads = new Map<number, MessageView[]>();
@@ -147,7 +145,11 @@ async function loadSourceRows(refs: SampleRef[]): Promise<Map<string, SourceRow>
 
   const [invoices, banks, dodos] = await Promise.all([
     invoiceIds.length
-      ? db.select().from(schema.invoices).where(inArray(schema.invoices.id, invoiceIds))
+      ? db
+          .select({ invoice: schema.invoices, vendorName: schema.vendors.name })
+          .from(schema.invoices)
+          .leftJoin(schema.vendors, eq(schema.vendors.id, schema.invoices.vendorId))
+          .where(inArray(schema.invoices.id, invoiceIds))
       : [],
     bankIds.length
       ? db
@@ -163,15 +165,9 @@ async function loadSourceRows(refs: SampleRef[]): Promise<Map<string, SourceRow>
       : [],
   ]);
 
-  const vendorIds = [...new Set(invoices.map((i) => i.vendorId))];
-  const vendors = vendorIds.length
-    ? await db.select().from(schema.vendors).where(inArray(schema.vendors.id, vendorIds))
-    : [];
-  const vendorNames = new Map(vendors.map((v) => [v.id, v.name]));
-
-  for (const row of invoices) {
+  for (const { invoice: row, vendorName } of invoices) {
     out.set(formatSampleId({ type: "invoice", id: row.id }), {
-      label: invoiceLabel(vendorNames.get(row.vendorId) ?? `vendor #${row.vendorId}`, row.invoiceNumber),
+      label: invoiceLabel(vendorName ?? `vendor #${row.vendorId}`, row.invoiceNumber),
       date: row.issueDate,
       amount: row.amount,
     });

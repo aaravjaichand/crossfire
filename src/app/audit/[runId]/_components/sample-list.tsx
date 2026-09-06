@@ -27,12 +27,18 @@ export function SampleList({
   samples,
   selectedId,
   memoryResolved = [],
+  onSelect,
 }: {
   runId: string;
   samples: SampleView[];
   selectedId: string;
   /** Sample ids ("invoice:5") the engine settled from run memory. */
   memoryResolved?: string[];
+  /**
+   * Handles a plain click in place of navigation. Modified clicks (new tab,
+   * middle button) fall through to the real link.
+   */
+  onSelect?: (sampleId: string) => void;
 }) {
   const byMemory = new Set(memoryResolved);
   const gaps = samples.filter((s) => s.status === "gap");
@@ -91,6 +97,15 @@ export function SampleList({
             <li key={sample.id}>
               <Link
                 href={`/audit/${encodeURIComponent(runId)}?s=${encodeURIComponent(sample.id)}`}
+                prefetch={false}
+                onClick={(event) => {
+                  if (!onSelect || event.defaultPrevented) return;
+                  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+                    return;
+                  }
+                  event.preventDefault();
+                  onSelect(sample.id);
+                }}
                 aria-current={selected ? "true" : undefined}
                 className={`grid grid-cols-[16px_minmax(0,1fr)_auto] gap-x-2.5 rounded-lg px-3 py-2.5 transition-colors ${
                   selected ? "bg-accent-soft" : "hover:bg-paper-2"
