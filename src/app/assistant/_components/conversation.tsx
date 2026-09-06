@@ -45,11 +45,27 @@ export function Conversation({
 }) {
   const [text, setText] = useState("");
   const bottom = useRef<HTMLDivElement | null>(null);
+  const composer = useRef<HTMLTextAreaElement | null>(null);
   const empty = messages.length === 0 && !pending && !error;
 
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: "end" });
   }, [messages.length, pending]);
+
+  // The field grows with the text up to about six lines, then scrolls inside
+  // itself, so the composer never pushes the transcript around.
+  useEffect(() => {
+    const el = composer.current;
+    if (!el) return;
+    el.style.height = "0px";
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+  }, [text]);
+
+  // Focus returns to the field once an answer lands, so the next question
+  // can be typed without a click.
+  useEffect(() => {
+    if (pending === null) composer.current?.focus();
+  }, [pending]);
 
   function submit() {
     const q = text.trim();
@@ -127,9 +143,9 @@ export function Conversation({
         )}
       </div>
 
-      <div className="border-t border-line bg-paper px-5 py-3">
+      <div className="shrink-0 border-t border-line bg-paper px-5 pb-4 pt-3">
         {!empty ? (
-          <div className="mb-2 flex flex-wrap gap-1.5">
+          <div className="mb-2.5 flex flex-wrap gap-1.5">
             {suggestions.slice(0, 4).map((s) => (
               <button key={s.label} type="button" className="btn" onClick={() => onSend(s.question, s.forceTool)} disabled={pending !== null}>
                 {s.label}
@@ -138,22 +154,23 @@ export function Conversation({
           </div>
         ) : null}
         <form
-          className="flex items-end gap-2"
+          className="rounded-[20px] border border-line bg-paper shadow-[0_2px_12px_rgba(0,0,0,0.04)] transition-colors focus-within:border-line-2"
           onSubmit={(e) => {
             e.preventDefault();
             submit();
           }}
         >
           <textarea
+            ref={composer}
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
                 submit();
               }
             }}
-            rows={Math.min(4, Math.max(2, text.split("\n").length))}
+            rows={1}
             maxLength={2000}
             disabled={pending !== null}
             placeholder={
@@ -162,11 +179,23 @@ export function Conversation({
                 : `Ask about run ${runContext.runId}${sampleRef ? ` or ${sampleRef}` : ""}…`
             }
             aria-label="Ask the assistant"
-            className="input min-h-[56px] w-full resize-none py-1.5 leading-relaxed"
+            className="block w-full resize-none bg-transparent px-4 pt-3.5 pb-1 text-[13px] leading-relaxed text-ink outline-none placeholder:text-ink-3 disabled:opacity-60"
           />
-          <button type="submit" className="btn btn-solid" disabled={pending !== null || text.trim().length === 0}>
-            {pending ? "Asking…" : "Ask"}
-          </button>
+          <div className="flex items-center justify-between px-3 pb-2.5 pt-1">
+            <span className="pl-1 text-[12px] text-ink-2">
+              GLM 4.7 <span className="text-ink-3">Flash</span>
+            </span>
+            <button
+              type="submit"
+              aria-label={pending ? "Asking" : "Send"}
+              disabled={pending !== null || text.trim().length === 0}
+              className="grid h-8 w-8 place-items-center rounded-full bg-ink text-paper transition-opacity disabled:opacity-30"
+            >
+              <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden>
+                <path d="M8 13V3.5M8 3.5 3.75 7.75M8 3.5l4.25 4.25" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+          </div>
         </form>
       </div>
     </section>
