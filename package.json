@@ -24,6 +24,7 @@
     "tracing:check": "tsx src/lib/tracing/tracing.check.ts",
     "binder:check": "tsx src/lib/binder/binder.check.ts",
     "auditor:check": "pnpm auditor:check-policy && pnpm auditor:check-citation && pnpm auditor:check-sampler && pnpm auditor:check-persist",
+    "assistant:check": "tsx src/lib/assistant/assistant.check.ts",
     "referee:check-citations": "tsx src/lib/referee/citations.check.ts",
     "referee:check-data": "tsx src/lib/referee/data.check.ts",
     "referee:check-actions": "tsx src/lib/referee/actions.check.ts",

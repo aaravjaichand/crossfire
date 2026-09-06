@@ -3,6 +3,12 @@
  * the model reads gathered evidence and writes prose, nothing else.
  */
 import OpenAI from "openai";
+import type {
+  ChatCompletionFunctionTool,
+  ChatCompletionMessage,
+  ChatCompletionMessageParam,
+  ChatCompletionToolChoiceOption,
+} from "openai/resources/chat/completions";
 
 export const LLM_BASE_URL = "https://api.tensormux.com/v1";
 export const LLM_MODEL = "glm-4-7-flash";
@@ -74,4 +80,48 @@ export async function complete(system: string, user: string): Promise<string> {
   }
   if (!text) throw new Error(`${LLM_MODEL} returned an empty completion.`);
   return text;
+}
+
+export type ChatOptions = {
+  messages: ChatCompletionMessageParam[];
+  tools?: ChatCompletionFunctionTool[];
+  /**
+   * "auto" or a named tool only. "required" is refused here in code: on this
+   * model it degenerates into hundreds of enumerated calls (the assistant
+   * design's probe E), so no caller may ask for it.
+   */
+  toolChoice?: ChatCompletionToolChoiceOption;
+  jsonObject?: boolean;
+  signal?: AbortSignal;
+};
+
+/**
+ * One chat completion with the same model settings as complete(), for callers
+ * that need the full message back — tool calls, finish reason — rather than
+ * the text. The controller's assistant is the one such caller.
+ */
+export async function chat(options: ChatOptions): Promise<ChatCompletionMessage & { finish_reason: string }> {
+  if (options.toolChoice === "required") {
+    throw new Error('tool_choice "required" is not allowed; use "auto" or a named tool.');
+  }
+  const response = await getClient().chat.completions.create(
+    {
+      model: LLM_MODEL,
+      temperature: 0,
+      reasoning_effort: "none",
+      max_tokens: LLM_MAX_TOKENS,
+      messages: options.messages,
+      ...(options.tools && options.tools.length > 0 ? { tools: options.tools } : {}),
+      ...(options.tools && options.tools.length > 0 && options.toolChoice ? { tool_choice: options.toolChoice } : {}),
+      ...(options.jsonObject ? { response_format: { type: "json_object" as const } } : {}),
+      ...NO_THINKING_EXTRA,
+    },
+    options.signal ? { signal: options.signal } : undefined,
+  );
+  const choice = response.choices[0];
+  if (!choice?.message) throw new Error(`${LLM_MODEL} returned no choices.`);
+  if (choice.finish_reason === "length") {
+    throw new Error(`${LLM_MODEL} hit the ${LLM_MAX_TOKENS}-token cap before finishing.`);
+  }
+  return { ...choice.message, finish_reason: choice.finish_reason };
 }
