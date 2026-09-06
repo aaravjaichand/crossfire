@@ -3,7 +3,8 @@
  * already in the bundle: it turns citations and gaps into a paragraph and is
  * told to admit a gap rather than argue around it.
  */
-import { complete } from "../llm";
+import { complete, LLM_MODEL } from "../llm";
+import { traceLlmCall } from "@/lib/tracing";
 import { buildFallbackDefense, finalizeDefense } from "./citations";
 import { formatSampleId } from "./sample";
 import type { EvidenceBundle } from "./types";
@@ -106,12 +107,29 @@ export async function writeDefense(
     return fallback("the model was turned off for this run (CROSSFIRE_NO_LLM)");
   }
 
+  const prompt = buildDefensePrompt(bundle, options);
   let modelText: string;
   try {
     if (llmForcedToFail()) {
       throw new Error("[defend probe] simulated model failure (CROSSFIRE_LLM_FAIL)");
     }
-    modelText = await complete(DEFENSE_SYSTEM_PROMPT, buildDefensePrompt(bundle, options));
+    // The call is unchanged; traceLlmCall only times it and files a span under
+    // whatever run and sample are on the stack. It returns what complete()
+    // returns and rethrows what complete() throws.
+    modelText = await traceLlmCall(
+      {
+        name: "accountant.defense",
+        model: LLM_MODEL,
+        input: prompt,
+        metadata: {
+          sample: formatSampleId(bundle.sample),
+          citations: bundle.citations.length,
+          gaps: bundle.gaps.length,
+          followUps: options.followUps?.length ?? 0,
+        },
+      },
+      () => complete(DEFENSE_SYSTEM_PROMPT, prompt),
+    );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[accountant/defend] LLM call failed, falling back to the gathered rows: ${message}`);

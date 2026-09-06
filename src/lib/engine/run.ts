@@ -57,6 +57,7 @@ import type { EvidenceBundle, SampleType } from "@/lib/auditor/evidence-types";
 import { phraseQuestion } from "@/lib/auditor/llm";
 import { decide } from "@/lib/auditor/policy";
 import { chooseQuestion, procedureFor } from "@/lib/auditor/questions";
+import { withRunTrace, withSampleSpan } from "@/lib/tracing";
 import type { SampleCandidate } from "@/lib/auditor/sampler";
 import { toCents } from "@/lib/auditor/util";
 
@@ -133,8 +134,10 @@ export async function runAudit(
   runId: number,
   options: RunAuditOptions = {},
 ): Promise<RunAuditResult> {
-  await requireRun(runId);
-  const { outcomes, failed } = await workClaimedSamples(runId, options);
+  const run = await requireRun(runId);
+  const { outcomes, failed } = await withRunTrace({ runId, name: run.name }, () =>
+    workClaimedSamples(runId, options),
+  );
   await finalizeRunStatus(runId);
 
   outcomes.sort((a, b) => a.auditSampleId - b.auditSampleId);
@@ -158,17 +161,19 @@ export async function runAuditStep(
   runId: number,
   options: RunStepOptions = {},
 ): Promise<RunStepResult> {
-  await requireRun(runId);
+  const run = await requireRun(runId);
   const budgetMs = options.budgetMs ?? STEP_BUDGET_MS;
   const maxSamples = options.maxSamples ?? STEP_MAX_SAMPLES;
 
-  const { outcomes, failed } = await workClaimedSamples(runId, {
-    ...options,
-    // Never start more workers than samples this step is allowed to settle.
-    concurrency: Math.min(options.concurrency ?? MAX_CONCURRENCY, maxSamples),
-    budgetMs,
-    maxSamples,
-  });
+  const { outcomes, failed } = await withRunTrace({ runId, name: run.name }, () =>
+    workClaimedSamples(runId, {
+      ...options,
+      // Never start more workers than samples this step is allowed to settle.
+      concurrency: Math.min(options.concurrency ?? MAX_CONCURRENCY, maxSamples),
+      budgetMs,
+      maxSamples,
+    }),
+  );
   const status = await finalizeRunStatus(runId);
 
   const [counts] = await db
@@ -190,12 +195,13 @@ export async function runAuditStep(
   };
 }
 
-async function requireRun(runId: number) {
+async function requireRun(runId: number): Promise<{ id: number; name: string }> {
   const [run] = await db
-    .select({ id: schema.auditRuns.id })
+    .select({ id: schema.auditRuns.id, name: schema.auditRuns.name })
     .from(schema.auditRuns)
     .where(eq(schema.auditRuns.id, runId));
   if (!run) throw new Error(`audit run #${runId} does not exist`);
+  return run;
 }
 
 /**
@@ -229,7 +235,10 @@ async function workClaimedSamples(
       if (!sample) return;
 
       try {
-        const outcome = await workSample(runId, sample);
+        const outcome = await withSampleSpan(
+          { type: sample.sampleType, id: sample.sampleId, auditSampleId: sample.id },
+          () => workSample(runId, sample),
+        );
         outcomes.push(outcome);
         options.onSettled?.(outcome);
       } catch (err) {

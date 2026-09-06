@@ -6,7 +6,8 @@
 // bounded 30s timeout. Falls back to the template text on any error so a
 // slow or failed model call never blocks a run.
 import { llmDisabled, llmForcedToFail } from "@/lib/accountant";
-import { complete } from "@/lib/llm";
+import { complete, LLM_MODEL } from "@/lib/llm";
+import { traceLlmCall } from "@/lib/tracing";
 
 const SYSTEM_PROMPT =
   "You are an auditor opening a conversation with a company's accountant about one sampled transaction. " +
@@ -26,7 +27,12 @@ export async function phraseQuestion(templateText: string): Promise<string> {
     if (llmForcedToFail()) {
       throw new Error("[auditor probe] simulated model failure (CROSSFIRE_LLM_FAIL)");
     }
-    return await complete(SYSTEM_PROMPT, templateText);
+    // Timed and filed under the sample's span when a run is on the stack;
+    // otherwise a plain call. Errors still fall through to the template.
+    return await traceLlmCall(
+      { name: "auditor.question", model: LLM_MODEL, input: templateText },
+      () => complete(SYSTEM_PROMPT, templateText),
+    );
   } catch (err) {
     console.error(
       `[auditor/llm] LLM call failed, falling back to template text: ${err instanceof Error ? err.message : String(err)}`,

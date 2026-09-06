@@ -71,6 +71,9 @@ export default async function AuditRunPage({
             progress={run.progress}
             total={run.sampleCount ?? total}
           />
+          <Link className="btn" href={`/audit/${encodeURIComponent(run.id)}/binder`}>
+            Binder
+          </Link>
         </div>
 
         <div className="flex shrink-0 items-center gap-3">
