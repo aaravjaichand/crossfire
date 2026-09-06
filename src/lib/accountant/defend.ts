@@ -32,6 +32,16 @@ export function llmDisabled(): boolean {
   return process.env.CROSSFIRE_NO_LLM === "1";
 }
 
+/**
+ * Test-only fault injection: CROSSFIRE_LLM_FAIL=1 makes every model call throw
+ * before it is made, so a check suite can exercise the "the model errored"
+ * branch offline, deterministically, and without waiting on a real timeout.
+ * Mirrors persist.ts's failAfterSampleCount. Never set it outside a check.
+ */
+export function llmForcedToFail(): boolean {
+  return process.env.CROSSFIRE_LLM_FAIL === "1";
+}
+
 export function buildDefensePrompt(bundle: EvidenceBundle, options: DefendOptions = {}): string {
   const citations = bundle.citations.length
     ? bundle.citations
@@ -86,29 +96,32 @@ export async function writeDefense(
   bundle: EvidenceBundle,
   options: DefendOptions = {},
 ): Promise<EvidenceBundle> {
-  const fallback = (preamble: string) => ({
+  const fallback = (reason: string): EvidenceBundle => ({
     ...bundle,
-    defense: buildFallbackDefense(bundle, { preamble, followUps: options.followUps }),
+    defense: buildFallbackDefense(bundle, { followUps: options.followUps }),
+    defenseSource: { source: "fallback", reason },
   });
 
   if (llmDisabled()) {
-    return fallback(
-      "This response is assembled directly from the gathered rows: the run was made with the model turned off (CROSSFIRE_NO_LLM).",
-    );
+    return fallback("the model was turned off for this run (CROSSFIRE_NO_LLM)");
   }
 
   let modelText: string;
   try {
+    if (llmForcedToFail()) {
+      throw new Error("[defend probe] simulated model failure (CROSSFIRE_LLM_FAIL)");
+    }
     modelText = await complete(DEFENSE_SYSTEM_PROMPT, buildDefensePrompt(bundle, options));
   } catch (err) {
-    console.error(
-      `[accountant/defend] LLM call failed, falling back to the gathered rows: ${err instanceof Error ? err.message : String(err)}`,
-    );
-    return fallback(
-      "This response is assembled directly from the gathered rows, because the model call failed.",
-    );
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[accountant/defend] LLM call failed, falling back to the gathered rows: ${message}`);
+    return fallback(`the model call failed: ${message}`);
   }
 
   const final = finalizeDefense(modelText, bundle);
-  return { ...bundle, defense: final.defense };
+  return {
+    ...bundle,
+    defense: final.defense,
+    defenseSource: { source: final.source, ...(final.reason ? { reason: final.reason } : {}) },
+  };
 }

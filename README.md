@@ -39,6 +39,7 @@ http://localhost:3000/api/health (returns `{ "ok": true, "db": "ok" }`).
 | `pnpm db:push` | Push `src/db/schema.ts` to Postgres with drizzle-kit (no migration files for the hackathon) |
 | `pnpm seed` | Regenerate Northwind Labs FY2025: truncates the six data tables, rewrites `data/`, runs the self-check |
 | `pnpm seed:check` | Re-run the self-check against the current database without reseeding |
+| `pnpm engine:check` | Drive whole runs through the auditor/accountant engine with the model off: sampling, the follow-up loop, bounded stepping, and the deterministic fallbacks |
 | `pnpm dev` / `pnpm build` / `pnpm start` | Next.js |
 
 ## Seed data
