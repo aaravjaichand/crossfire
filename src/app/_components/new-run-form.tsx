@@ -6,8 +6,13 @@ import { startRun } from "@/lib/engine/start";
 import { CYCLES, DEFAULT_CYCLE_IDS } from "@/lib/referee/cycles";
 
 const GENERIC_FAILURE = "The run could not be started. Try again.";
-const DEFAULT_MATERIALITY = "5000";
+// $50,000, not a conventional-looking $5,000: nothing in these books exceeds
+// $49,900, so a $5,000 threshold makes the materiality-first rule test 98
+// records in every run and starve the Dodo cycle. Replaced by
+// DEFAULT_MATERIALITY_CENTS from src/lib/engine/inputs.ts once that lands.
+const DEFAULT_MATERIALITY = "50000";
 const DEFAULT_SAMPLE_SIZE = "25";
+const DEFAULT_SEED = "1";
 
 /**
  * The whole run configuration inline on the runs list, so starting a run is
@@ -24,7 +29,7 @@ export function NewRunForm() {
   const [materiality, setMateriality] = useState(DEFAULT_MATERIALITY);
   const [sampleSize, setSampleSize] = useState(DEFAULT_SAMPLE_SIZE);
   const [cycles, setCycles] = useState<string[]>(DEFAULT_CYCLE_IDS);
-  const [seed, setSeed] = useState("7");
+  const [seed, setSeed] = useState(DEFAULT_SEED);
 
   function toggleCycle(id: string) {
     setCycles((current) =>
@@ -128,7 +133,7 @@ export function NewRunForm() {
         </Field>
       </div>
       <div id="materiality-unit" className="mt-1 text-[11px] text-ink-3">
-        Materiality is in dollars.
+        Materiality is in dollars. Every item at or above this amount is always tested.
       </div>
 
       <fieldset className="mt-3">
