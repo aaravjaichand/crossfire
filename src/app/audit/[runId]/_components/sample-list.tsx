@@ -11,11 +11,11 @@ import { STATUS_META, TYPE_LABEL, VERDICT_MARK } from "./status";
  * look at; everything else the accountant and the follow-up policy have
  * already settled. The toggle shows the whole run.
  *
- * The filter is on status alone. sufficient, needs_more, and accepted_with_note
- * all move the sample off "gap", so ruling one of those does take the row out
- * of the queue — which is the point of a queue. An exception leaves the status
- * at "gap", so those rows stay, and the verdict beside them is the only thing
- * separating a gap that has been ruled on from one that has not.
+ * "Needs ruling" means a gap with no verdict on it yet, which is what the count
+ * beside it has always said. Any verdict takes the row out of the queue,
+ * including an exception — that one keeps the status at "gap", so without this
+ * it would sit in the queue for the rest of the run looking unhandled. It
+ * reappears under Show all carrying its verdict.
  */
 export function SampleList({
   runId,
@@ -27,12 +27,12 @@ export function SampleList({
   selectedId: string;
 }) {
   const gaps = samples.filter((s) => s.status === "gap");
-  // With no gaps there is nothing to rule on, and an empty pane would hide the
-  // run instead of describing it. The toggle is never disabled: ruling the last
-  // gap empties this list, and the toggle is the only way back to the run.
-  const [needsRulingOnly, setNeedsRulingOnly] = useState(gaps.length > 0);
-  const shown = needsRulingOnly ? gaps : samples;
-  const unruled = gaps.filter((s) => !s.ruling).length;
+  const needsRuling = gaps.filter((s) => !s.ruling);
+  // With nothing to rule on, an empty pane would hide the run instead of
+  // describing it. The toggle is never disabled: ruling the last gap empties
+  // this list, and the toggle is the only way back to the run.
+  const [needsRulingOnly, setNeedsRulingOnly] = useState(needsRuling.length > 0);
+  const shown = needsRulingOnly ? needsRuling : samples;
 
   return (
     <nav
@@ -50,7 +50,7 @@ export function SampleList({
           <span className="text-[11px] text-ink-3">
             {gaps.length === 0
               ? "No gaps in this run"
-              : `${unruled} of ${gaps.length} ${gaps.length === 1 ? "gap" : "gaps"} unruled`}
+              : `${needsRuling.length} of ${gaps.length} ${gaps.length === 1 ? "gap" : "gaps"} unruled`}
           </span>
           <button
             type="button"

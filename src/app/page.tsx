@@ -80,7 +80,7 @@ function RunsTable({ runs }: { runs: RunSummary[] }) {
             <th className="py-2 pr-4 text-right font-medium">Samples</th>
             <th className="py-2 pr-4 text-right font-medium">Defended</th>
             <th className="py-2 pr-4 text-right font-medium">Gaps</th>
-            <th className="py-2 pr-4 text-right font-medium">Conceded</th>
+            <th className="py-2 pr-4 text-right font-medium">Exceptions</th>
             <th className="py-2 pr-4 text-right font-medium">Open</th>
             <th className="w-44 py-2 font-medium">Coverage</th>
           </tr>
@@ -104,7 +104,7 @@ function RunsTable({ runs }: { runs: RunSummary[] }) {
                 <Num value={run.total} />
                 <Num value={run.defended} />
                 <Num value={run.gap} />
-                <Num value={run.conceded} />
+                <Num value={run.exceptions} />
                 <Num value={run.open} muted />
                 <td className="py-2.5">
                   <div className="flex items-center gap-2">

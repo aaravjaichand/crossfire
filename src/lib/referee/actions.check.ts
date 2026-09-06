@@ -28,6 +28,7 @@ import { recordDecision, type DecisionInput, type DecisionResult } from "./decid
 import { getRun } from "./data";
 import { loadDecisions } from "./decisions";
 import { MOCK_RUN_ID } from "./mock-run";
+import { recentRuns } from "./runs";
 import type { Remedy, Verdict } from "./verdicts";
 
 // actions.ts is a "use server" wrapper that adds revalidatePath around this
@@ -186,6 +187,34 @@ async function main() {
     );
     check("the last ruling is hung on the sample for the list marker", sample?.ruling?.verdict === "exception", sample?.ruling?.verdict);
 
+    // ---- 3b. the runs list separates outstanding gaps from findings ----
+    // The bank sample is moved to gap and left unruled, so both branches of the
+    // count are exercised: one gap waiting on a controller, one already ruled
+    // an exception. Both sit at status "gap"; only the verdict tells them apart.
+    await db
+      .update(schema.auditSamples)
+      .set({ status: "gap" })
+      .where(eq(schema.auditSamples.id, probe.bankAuditSampleId));
+    const summary = (await recentRuns(50)).find((r) => r.id === probe.runId);
+    check("the probe run appears in the runs list", Boolean(summary), summary ? "" : "missing");
+    check("both samples are counted", summary?.total === 2, String(summary?.total));
+    check(
+      "an unruled gap counts as a gap",
+      summary?.gap === 1,
+      `gap=${summary?.gap}`,
+    );
+    check(
+      "a gap ruled an exception counts as an exception, not as outstanding work",
+      summary?.exceptions === 1,
+      `exceptions=${summary?.exceptions}`,
+    );
+    check(
+      "the columns add up to the sample total",
+      (summary?.defended ?? 0) + (summary?.gap ?? 0) + (summary?.exceptions ?? 0) + (summary?.open ?? 0) ===
+        summary?.total,
+      `${summary?.defended}+${summary?.gap}+${summary?.exceptions}+${summary?.open} vs ${summary?.total}`,
+    );
+
     // ---- 4. a verdict without what it requires ----
     const decisionsBefore = await decisionCount(runId, probe.invoiceId);
     const learnedBefore = (await learnedRows(runId, probe.invoiceId)).length;
@@ -202,6 +231,7 @@ async function main() {
     check("none of the refusals wrote a decision", (await decisionCount(runId, probe.invoiceId)) === decisionsBefore);
     check("none of the refusals wrote a learned rule", (await learnedRows(runId, probe.invoiceId)).length === learnedBefore);
     check("none of the refusals moved the status", (await statusOf(probe.auditSampleId)) === "gap");
+    check("nor any other sample's", (await statusOf(probe.bankAuditSampleId)) === "gap");
 
     // A remedy is meaningless on a verdict with no finding, so it is dropped.
     const strayRemedy = await rule(input, "sufficient", { remedy: "post_entry" });
