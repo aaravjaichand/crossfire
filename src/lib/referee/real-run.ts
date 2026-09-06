@@ -52,6 +52,8 @@ export async function buildRealRun(runDbId: number): Promise<RunView | null> {
     const message: MessageView = { turn: row.turn, role, content: row.content };
     const evidence = row.evidence === null ? undefined : parseEvidenceBundle(row.evidence);
     if (evidence) message.evidence = evidence;
+    const procedure = optionalText(row, "procedure");
+    if (procedure) message.procedure = procedure;
     const list = threads.get(row.sampleId);
     if (list) list.push(message);
     else threads.set(row.sampleId, [message]);
@@ -79,7 +81,39 @@ export async function buildRealRun(runDbId: number): Promise<RunView | null> {
     });
   }
 
-  return { id: String(run.id), name: run.name, kind: "real", samples };
+  const view: RunView = { id: String(run.id), name: run.name, kind: "real", samples };
+  const materiality = optionalInt(run, "materiality");
+  if (materiality !== undefined) view.materiality = materiality;
+  const sampleSize = optionalInt(run, "sampleSize") ?? optionalInt(run, "sample_size");
+  if (sampleSize !== undefined) view.sampleSize = sampleSize;
+  const cycles = optionalStrings(run, "cycles");
+  if (cycles) view.cycles = cycles;
+  return view;
+}
+
+// audit_runs.materiality / sample_size / cycles and audit_exchanges.procedure
+// are Worker A's columns. Drizzle only returns columns declared in schema.ts,
+// so before that work lands these read undefined and the screen shows an em
+// dash; after it lands the same accessors pick the values up with no change
+// here. Nothing below assumes the column exists.
+
+function optionalInt(row: object, key: string): number | undefined {
+  const value = (row as Record<string, unknown>)[key];
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && /^-?\d+$/.test(value)) return Number(value);
+  return undefined;
+}
+
+function optionalText(row: object, key: string): string | undefined {
+  const value = (row as Record<string, unknown>)[key];
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
+
+function optionalStrings(row: object, key: string): string[] | undefined {
+  const value = (row as Record<string, unknown>)[key];
+  if (!Array.isArray(value)) return undefined;
+  const strings = value.filter((v): v is string => typeof v === "string" && v.length > 0);
+  return strings.length > 0 ? strings : undefined;
 }
 
 /**

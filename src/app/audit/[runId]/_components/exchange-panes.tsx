@@ -157,6 +157,11 @@ function Message({ message }: { message: MessageView }) {
         <div className="font-mono text-[11px] text-ink-3 num">turn {message.turn}</div>
       </div>
       <div>
+        {message.procedure ? (
+          <div className="mb-1 text-[11px] text-ink-3" title="Audit procedure this question came from">
+            Procedure · {message.procedure}
+          </div>
+        ) : null}
         <p className={`text-[13px] leading-relaxed ${isReferee ? "text-ink-2" : "text-ink"}`}>
           <Prose text={message.content} />
         </p>

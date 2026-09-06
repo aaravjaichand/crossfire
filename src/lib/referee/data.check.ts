@@ -258,6 +258,7 @@ async function deleteProbeRun(runId: number) {
   await db.delete(schema.auditExchanges).where(eq(schema.auditExchanges.runId, runId));
   await db.delete(schema.auditSamples).where(eq(schema.auditSamples.runId, runId));
   await db.delete(schema.refereeDecisions).where(eq(schema.refereeDecisions.runId, String(runId)));
+  await db.delete(schema.learnedRules).where(eq(schema.learnedRules.runId, String(runId)));
   await db.delete(schema.auditRuns).where(eq(schema.auditRuns.id, runId));
 }
 

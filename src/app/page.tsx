@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { count } from "drizzle-orm";
 import { db, schema } from "@/db";
+import { NewRunForm } from "@/app/_components/new-run-form";
 import { recentRuns, type RunSummary } from "@/lib/referee/runs";
 
 export const dynamic = "force-dynamic";
@@ -29,17 +30,18 @@ export default async function Home() {
     <main className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto max-w-5xl px-8 py-7">
         <header className="flex items-end justify-between gap-6">
-          <div>
+          <div className="max-w-2xl">
             <h1 className="text-[20px] font-semibold tracking-tight">Audit runs</h1>
             <p className="mt-1 text-[12.5px] text-ink-2">
               Northwind Labs, FY2025. Each run samples the books, asks for evidence, and waits
               for your call on every gap.
             </p>
           </div>
-          <Link href="/audit/mock" className="btn">
-            Open walkthrough
-          </Link>
         </header>
+
+        <section className="mt-5">
+          <NewRunForm />
+        </section>
 
         <section className="mt-6">
           {runs.length === 0 ? <EmptyRuns /> : <RunsTable runs={runs} />}
@@ -134,7 +136,8 @@ function EmptyRuns() {
     <div className="rounded-[4px] border border-line px-5 py-6">
       <p className="text-[13px] font-medium">No audit runs yet</p>
       <p className="mt-1 text-[12.5px] text-ink-2">
-        Create one from the repo root, then it appears here and in the sidebar.
+        Start one with New run above, or from the repo root; either way it appears here and in
+        the sidebar.
       </p>
       <pre className="mt-3 inline-block rounded-[4px] bg-paper-2 px-3 py-2 font-mono text-[12px]">
         pnpm auditor:run --seed 7 --name &quot;First pass&quot;

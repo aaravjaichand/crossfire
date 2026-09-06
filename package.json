@@ -24,7 +24,8 @@
     "referee:check-data": "tsx src/lib/referee/data.check.ts",
     "referee:check-actions": "tsx src/lib/referee/actions.check.ts",
     "referee:check-files": "tsx src/lib/referee/files.check.ts",
-    "referee:check": "pnpm referee:check-citations && pnpm referee:check-data && pnpm referee:check-actions && pnpm referee:check-files"
+    "referee:check-adjustments": "tsx src/lib/referee/adjustments.check.ts",
+    "referee:check": "pnpm referee:check-citations && pnpm referee:check-data && pnpm referee:check-actions && pnpm referee:check-adjustments && pnpm referee:check-files"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.2",

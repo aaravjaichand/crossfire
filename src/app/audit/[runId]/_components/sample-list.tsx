@@ -1,7 +1,20 @@
-import Link from "next/link";
-import { formatMoney, type SampleView } from "@/lib/referee/data";
-import { STATUS_META, TYPE_LABEL } from "./status";
+"use client";
 
+import Link from "next/link";
+import { useState } from "react";
+import type { SampleView } from "@/lib/referee/data";
+import { formatMoney } from "@/lib/referee/format";
+import { STATUS_META, TYPE_LABEL, VERDICT_MARK } from "./status";
+
+/**
+ * Defaults to the gaps, because those are the only samples a controller has to
+ * look at; everything else the accountant and the follow-up policy have
+ * already settled. The toggle shows the whole run.
+ *
+ * The filter is on status alone, so ruling on a sample never makes a row
+ * disappear from under the cursor. A ruled gap keeps its place and gains the
+ * verdict beside it.
+ */
 export function SampleList({
   runId,
   samples,
@@ -11,18 +24,46 @@ export function SampleList({
   samples: SampleView[];
   selectedId: string;
 }) {
+  const gaps = samples.filter((s) => s.status === "gap");
+  // With no gaps there is nothing to rule on, and an empty pane would hide the
+  // run instead of describing it.
+  const [needsRulingOnly, setNeedsRulingOnly] = useState(gaps.length > 0);
+  const shown = needsRulingOnly ? gaps : samples;
+  const unruled = gaps.filter((s) => !s.ruling).length;
+
   return (
     <nav
       aria-label="Samples"
       className="min-h-0 overflow-y-auto rounded-xl border border-line bg-paper shadow-[0_5px_18px_rgba(0,0,0,0.045)]"
     >
-      <div className="sticky top-0 z-10 flex items-baseline justify-between border-b border-line bg-paper px-3.5 py-2.5">
-        <span className="text-[12px] font-medium">Samples</span>
-        <span className="font-mono text-[11px] text-ink-3 num">{samples.length}</span>
+      <div className="sticky top-0 z-10 border-b border-line bg-paper px-3.5 py-2.5">
+        <div className="flex items-baseline justify-between">
+          <span className="text-[12px] font-medium">
+            {needsRulingOnly ? "Needs ruling" : "Samples"}
+          </span>
+          <span className="font-mono text-[11px] text-ink-3 num">{shown.length}</span>
+        </div>
+        <div className="mt-1 flex items-baseline justify-between gap-2">
+          <span className="text-[11px] text-ink-3">
+            {gaps.length === 0
+              ? "No gaps in this run"
+              : `${unruled} of ${gaps.length} ${gaps.length === 1 ? "gap" : "gaps"} unruled`}
+          </span>
+          <button
+            type="button"
+            onClick={() => setNeedsRulingOnly((v) => !v)}
+            aria-pressed={!needsRulingOnly}
+            disabled={gaps.length === 0}
+            className="text-[11px] text-ink-2 underline underline-offset-2 hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {needsRulingOnly ? `Show all ${samples.length}` : "Needs ruling only"}
+          </button>
+        </div>
       </div>
       <ul className="space-y-1 p-1.5">
-        {samples.map((sample) => {
+        {shown.map((sample) => {
           const meta = STATUS_META[sample.status];
+          const verdict = sample.ruling ? VERDICT_MARK[sample.ruling.verdict] : null;
           const selected = sample.id === selectedId;
           return (
             <li key={sample.id}>
@@ -30,9 +71,7 @@ export function SampleList({
                 href={`/audit/${encodeURIComponent(runId)}?s=${encodeURIComponent(sample.id)}`}
                 aria-current={selected ? "true" : undefined}
                 className={`grid grid-cols-[16px_minmax(0,1fr)_auto] gap-x-2.5 rounded-lg px-3 py-2.5 transition-colors ${
-                  selected
-                    ? "bg-accent-soft"
-                    : "hover:bg-paper-2"
+                  selected ? "bg-accent-soft" : "hover:bg-paper-2"
                 }`}
               >
                 <span
@@ -46,14 +85,23 @@ export function SampleList({
                   {sample.label}
                 </span>
                 <span className="font-mono text-[12px] num">{formatMoney(sample.amount)}</span>
-                <span className="text-[11.5px] text-ink-3">
+                <span className="truncate text-[11.5px] text-ink-3">
                   {TYPE_LABEL[sample.type]} {sample.id.split(":")[1]}
+                  {verdict ? (
+                    <>
+                      <span className="mx-1.5 text-line-2">|</span>
+                      <span className={verdict.text}>{verdict.short}</span>
+                    </>
+                  ) : null}
                 </span>
                 <span className="font-mono text-[11px] text-ink-3 num">{sample.date}</span>
               </Link>
             </li>
           );
         })}
+        {shown.length === 0 ? (
+          <li className="px-3 py-4 text-[12px] text-ink-3">This run has no samples.</li>
+        ) : null}
       </ul>
     </nav>
   );
