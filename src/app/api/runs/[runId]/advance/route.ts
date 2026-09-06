@@ -17,6 +17,13 @@
 import { NextResponse } from "next/server";
 import { runAuditStep, STEP_BUDGET_MS, STEP_MAX_SAMPLES } from "@/lib/engine/run";
 
+/**
+ * A step is bounded by STEP_BUDGET_MS, but the call in flight when the budget
+ * runs out still has to finish. 120s leaves that call room on the host instead
+ * of cutting it off mid-request and reporting a model failure that never was.
+ */
+export const maxDuration = 120;
+
 export async function POST(
   _request: Request,
   { params }: { params: Promise<{ runId: string }> },
