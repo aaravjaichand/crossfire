@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import type { MessageView, SampleView } from "@/lib/referee/data";
 import type { Citation } from "@/lib/referee/evidence-types";
-import { procedureLabel, STATUS_META } from "./status";
+import { MEMORY_MARK, procedureLabel, STATUS_META } from "./status";
 
 const POLL_MS = 2000;
 
@@ -147,6 +147,16 @@ const ROLE_LABEL: Record<string, string> = {
   referee: "Controller",
 };
 
+// A turn the engine wrote from run memory is filed as a fallback like any other
+// defense written here, but it was not assembled from the evidence: it repeats a
+// ruling the controller already made (buildMemoryTurn in accountant/memory.ts).
+// The reason it carries is what separates the two — an ordinary assembled
+// defense can cite a consulted learned_rules row of its own, so the citation is
+// not on its own enough to tell them apart.
+function carriedForward(reason: string | undefined): boolean {
+  return (reason ?? "").startsWith("carried forward");
+}
+
 // Transcript layout: who spoke in a fixed column, what they said beside it.
 function Message({ message }: { message: MessageView }) {
   const label = ROLE_LABEL[message.role] ?? message.role;
@@ -172,7 +182,16 @@ function Message({ message }: { message: MessageView }) {
             className="mb-1 text-[11px] text-ink-3"
             title={message.evidence.defenseSource.reason || undefined}
           >
-            Assembled from evidence
+            {carriedForward(message.evidence.defenseSource.reason) ? (
+              <>
+                <span className="font-mono" aria-hidden>
+                  {MEMORY_MARK}
+                </span>{" "}
+                Carried forward from an earlier ruling
+              </>
+            ) : (
+              "Assembled from evidence"
+            )}
           </div>
         ) : null}
         <p className={`text-[13px] leading-relaxed ${isReferee ? "text-ink-2" : "text-ink"}`}>

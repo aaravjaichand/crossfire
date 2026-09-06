@@ -44,7 +44,14 @@ export default async function AuditRunPage({
 
   if (!run) return <RunNotFound runId={runId} />;
 
-  const selected = run.samples.find((sample) => sample.id === s) ?? run.samples[0];
+  // With no ?s= the screen opens on the work: the first gap the controller has
+  // still to rule on, taken in the order the sample list shows them, so the
+  // highlighted row is the top of the "Needs ruling" queue rather than whatever
+  // the sampler happened to draw first. Then a gap already ruled on, then the
+  // first sample of the run.
+  const gaps = run.samples.filter((sample) => sample.status === "gap");
+  const opening = gaps.find((sample) => !sample.ruling) ?? gaps[0] ?? run.samples[0];
+  const selected = run.samples.find((sample) => sample.id === s) ?? opening;
   const ref = selected ? parseSampleId(selected.id) : null;
   const { defended, total, percent } = coverage(run);
   // Which of those defended samples a controller ruling from an earlier run
