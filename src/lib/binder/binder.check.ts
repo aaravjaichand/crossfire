@@ -9,7 +9,7 @@
  * The fixture is a hand-built RunView, so nothing here needs a database.
  */
 import "./load-env";
-import { buildBinder } from "./assemble";
+import { buildBinder, TICKMARKS } from "./assemble";
 import type { EvidenceBundle, Gap } from "@/lib/referee/evidence-types";
 import type { RunView, SampleView } from "@/lib/referee/data";
 
@@ -160,6 +160,28 @@ check(
     binder.sections[0].tickmark === "✓" &&
     binder.sections[4].tickmark === "○",
   binder.sections.map((s) => s.tickmark).join(""),
+);
+
+// ---- resolved by memory ----
+// The same run, with the defended sample marked the way audit_samples.resolution
+// marks one the engine settled from an earlier ruling.
+const remembered = buildBinder(run, { memoryResolved: new Set(["invoice:1"]) });
+check(
+  "a sample settled from run memory gets the ◆ tickmark and says so",
+  remembered.sections[0].tickmark === "◆" &&
+    remembered.sections[0].disposition.startsWith("Resolved by memory"),
+  `${remembered.sections[0].tickmark} ${remembered.sections[0].disposition}`,
+);
+check(
+  "it still counts as defended coverage, and the legend explains the mark",
+  remembered.coverage.defended === binder.coverage.defended &&
+    TICKMARKS.some((t) => t.mark === "◆"),
+  `${remembered.coverage.defended} defended, ${TICKMARKS.length} tickmarks`,
+);
+check(
+  "a ruling made on this run outranks one carried forward",
+  buildBinder(run, { memoryResolved: new Set(["invoice:2"]) }).sections[1].tickmark === "✕",
+  buildBinder(run, { memoryResolved: new Set(["invoice:2"]) }).sections[1].tickmark,
 );
 
 // ---- disposition names the decider ----

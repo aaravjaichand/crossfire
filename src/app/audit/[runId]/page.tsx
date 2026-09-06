@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { memoryResolvedIds } from "@/lib/accountant/memory";
 import { proposeAdjustment } from "@/lib/referee/adjustments";
 import { CYCLES, cycleLabel } from "@/lib/referee/cycles";
 import {
@@ -46,6 +47,10 @@ export default async function AuditRunPage({
   const selected = run.samples.find((sample) => sample.id === s) ?? run.samples[0];
   const ref = selected ? parseSampleId(selected.id) : null;
   const { defended, total, percent } = coverage(run);
+  // Which of those defended samples a controller ruling from an earlier run
+  // settled, read from audit_samples.resolution rather than inferred from the
+  // transcript. Empty for the walkthrough run, which has no such rows.
+  const memoryResolved = [...(await memoryResolvedIds(run.id))];
   // The entry is deterministic and cheap, so it is computed here and handed to
   // the controls as a plain prop rather than fetched when the panel opens.
   const entry = selected ? adjustmentFor(selected) : null;
@@ -64,7 +69,12 @@ export default async function AuditRunPage({
         </div>
 
         <div className="hidden shrink-0 items-center gap-4 md:flex">
-          <CoverageBar defended={defended} total={total} percent={percent} />
+          <CoverageBar
+            defended={defended}
+            total={total}
+            percent={percent}
+            byMemory={memoryResolved.length}
+          />
           <RunProgress
             runId={run.id}
             status={run.status}
@@ -92,7 +102,12 @@ export default async function AuditRunPage({
       </header>
 
       <div className="grid min-h-0 flex-1 gap-3 overflow-x-auto bg-paper-2 p-3 grid-cols-[16rem_minmax(20rem,1fr)] lg:grid-cols-[17rem_minmax(22rem,1fr)_17rem] xl:grid-cols-[20rem_minmax(26rem,1fr)_21rem]">
-        <SampleList runId={run.id} samples={run.samples} selectedId={selected?.id ?? ""} />
+        <SampleList
+          runId={run.id}
+          samples={run.samples}
+          selectedId={selected?.id ?? ""}
+          memoryResolved={memoryResolved}
+        />
         {selected ? (
           <ExchangePanes
             key={`${selected.id}:${selected.status}:${selected.thread.length}`}

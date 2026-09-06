@@ -120,6 +120,12 @@ export const auditSamples = pgTable("audit_samples", {
   // serverless invocation ending) does not strand it. See src/lib/engine/run.ts.
   claimedAt: timestamp("claimed_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+  // How a settled sample was settled, when it was settled by anything other
+  // than the evidence in its own thread. "memory" means a controller ruling
+  // from an earlier run disposed of it (src/lib/accountant/memory.ts); null
+  // means the ordinary path. Written by the engine, read by the run screen and
+  // the binder so neither has to infer it from the transcript.
+  resolution: text("resolution"),
 });
 
 // One row per turn in the auditor/accountant/referee conversation for a

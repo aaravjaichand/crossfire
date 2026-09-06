@@ -15,6 +15,23 @@ export const STATUS_META: Record<
   conceded: { label: "Conceded", mark: "✕", text: "text-danger", hint: "Finding recorded in an earlier run" },
 };
 
+/**
+ * A sample settled by a controller ruling from an earlier run
+ * (audit_samples.resolution = "memory"). It is defended — it counts towards
+ * coverage like any other defended sample — but it was not the evidence in
+ * this run's thread that closed it, and an auditor reading the list should be
+ * able to see which is which at a glance. Its own shape, for the same reason
+ * every other status has one.
+ */
+export const MEMORY_MARK = "◆";
+
+export const MEMORY_META = {
+  label: "Resolved by memory",
+  mark: MEMORY_MARK,
+  text: "text-accent",
+  hint: "Closed by the controller's ruling on an earlier run",
+};
+
 // Shown on a sample the controller has already ruled on. An exception leaves
 // the status at "gap", so without this the list cannot tell a gap that is
 // waiting for a ruling from one that has had it.

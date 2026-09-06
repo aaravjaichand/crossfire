@@ -4,12 +4,17 @@ import Link from "next/link";
 import { useState } from "react";
 import type { SampleView } from "@/lib/referee/data";
 import { formatMoney } from "@/lib/referee/format";
-import { STATUS_META, TYPE_LABEL, VERDICT_MARK } from "./status";
+import { MEMORY_META, STATUS_META, TYPE_LABEL, VERDICT_MARK } from "./status";
 
 /**
  * Defaults to the gaps, because those are the only samples a controller has to
  * look at; everything else the accountant and the follow-up policy have
  * already settled. The toggle shows the whole run.
+ *
+ * A sample carrying its own mark for "resolved by memory" is defended, so it
+ * is never in the ruling queue: the controller has already ruled on it, in an
+ * earlier run. The mark is there so an auditor reading the list can see which
+ * defended samples this run actually proved and which it inherited.
  *
  * "Needs ruling" means a gap with no verdict on it yet, which is what the count
  * beside it has always said. Any verdict takes the row out of the queue,
@@ -21,11 +26,15 @@ export function SampleList({
   runId,
   samples,
   selectedId,
+  memoryResolved = [],
 }: {
   runId: string;
   samples: SampleView[];
   selectedId: string;
+  /** Sample ids ("invoice:5") the engine settled from run memory. */
+  memoryResolved?: string[];
 }) {
+  const byMemory = new Set(memoryResolved);
   const gaps = samples.filter((s) => s.status === "gap");
   const needsRuling = gaps.filter((s) => !s.ruling);
   // With nothing to rule on, an empty pane would hide the run instead of
@@ -47,10 +56,21 @@ export function SampleList({
           <span className="font-mono text-[11px] text-ink-3 num">{shown.length}</span>
         </div>
         <div className="mt-1 flex items-baseline justify-between gap-2">
-          <span className="text-[11px] text-ink-3">
+          <span className="truncate text-[11px] text-ink-3">
             {gaps.length === 0
               ? "No gaps in this run"
               : `${needsRuling.length} of ${gaps.length} ${gaps.length === 1 ? "gap" : "gaps"} unruled`}
+            {byMemory.size > 0 ? (
+              <>
+                <span className="mx-1.5 text-line-2">|</span>
+                <span className="text-accent" title={MEMORY_META.hint}>
+                  <span className="font-mono" aria-hidden>
+                    {MEMORY_META.mark}
+                  </span>{" "}
+                  <span className="num">{byMemory.size}</span> by memory
+                </span>
+              </>
+            ) : null}
           </span>
           <button
             type="button"
@@ -64,7 +84,7 @@ export function SampleList({
       </div>
       <ul className="space-y-1 p-1.5">
         {shown.map((sample) => {
-          const meta = STATUS_META[sample.status];
+          const meta = byMemory.has(sample.id) ? MEMORY_META : STATUS_META[sample.status];
           const verdict = sample.ruling ? VERDICT_MARK[sample.ruling.verdict] : null;
           const selected = sample.id === selectedId;
           return (

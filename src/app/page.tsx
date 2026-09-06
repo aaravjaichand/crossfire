@@ -2,6 +2,8 @@ import Link from "next/link";
 import { count } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { NewRunForm } from "@/app/_components/new-run-form";
+import { RunComparisonPanel } from "@/app/_components/run-comparison";
+import { compareLatestRuns } from "@/lib/engine/comparison";
 import { recentRuns, type RunSummary } from "@/lib/referee/runs";
 
 export const dynamic = "force-dynamic";
@@ -16,8 +18,10 @@ const BOOKS = [
 ] as const;
 
 export default async function Home() {
-  const [runs, books] = await Promise.all([
+  const [runs, comparison, books] = await Promise.all([
     recentRuns(20),
+    // Null until there are two runs with samples to compare.
+    compareLatestRuns(),
     Promise.all(
       BOOKS.map(async ([name, table]) => {
         const [row] = await db.select({ n: count() }).from(table);
@@ -38,6 +42,12 @@ export default async function Home() {
             </p>
           </div>
         </header>
+
+        {comparison ? (
+          <section className="mt-5">
+            <RunComparisonPanel comparison={comparison} />
+          </section>
+        ) : null}
 
         <section className="mt-5">
           <NewRunForm />
