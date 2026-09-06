@@ -1,4 +1,4 @@
-import type { EvidenceBundle, Gap, SampleType } from "./evidence-types";
+import type { Gap, ParsedEvidenceBundle, SampleType } from "./evidence-types";
 import { buildMockRun, MOCK_RUN_ID } from "./mock-run";
 import { buildRealRun } from "./real-run";
 import { loadDecisions, type StoredDecision } from "./decisions";
@@ -16,7 +16,7 @@ export type MessageView = {
   turn: number;
   role: MessageRole;
   content: string;
-  evidence?: EvidenceBundle;
+  evidence?: ParsedEvidenceBundle;
   /** The audit procedure the question came from. Set on auditor turns only. */
   procedure?: string;
 };
@@ -156,7 +156,7 @@ function refereeLine(d: StoredDecision): string {
  * The bundle the exception panel and the learned rule are both derived from:
  * the most recent accountant turn that carried evidence.
  */
-export function latestEvidence(sample: SampleView): EvidenceBundle | undefined {
+export function latestEvidence(sample: SampleView): ParsedEvidenceBundle | undefined {
   return [...sample.thread].reverse().find((m) => m.role === "accountant" && m.evidence)?.evidence;
 }
 

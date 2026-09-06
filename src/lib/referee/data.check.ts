@@ -139,6 +139,49 @@ async function main() {
       "a well-formed bundle survives the round trip",
       parseEvidenceBundle({ sample: { type: "invoice", id: 1 }, citations: [], gaps: [] })?.sample.id === 1,
     );
+
+    // The parser rebuilds the bundle field by field, so anything it does not
+    // name is dropped. defenseSource is written by the engine and read by the
+    // transcript, so it has to survive that rebuild.
+    const withSource = parseEvidenceBundle({
+      sample: { type: "invoice", id: 1 },
+      citations: [],
+      gaps: [],
+      defenseSource: { source: "fallback", reason: "uncited sentence" },
+    });
+    check(
+      "defenseSource survives the parse",
+      withSource?.defenseSource?.source === "fallback" &&
+        withSource.defenseSource.reason === "uncited sentence",
+      JSON.stringify(withSource?.defenseSource ?? null),
+    );
+    // The engine omits `reason` entirely for a model-written defense, so this
+    // is the shape the common case actually arrives in.
+    const modelSource = parseEvidenceBundle({
+      sample: { type: "invoice", id: 1 },
+      citations: [],
+      gaps: [],
+      defenseSource: { source: "model" },
+    })?.defenseSource;
+    check(
+      "a model-written defense keeps its source with no reason attached",
+      modelSource?.source === "model" && modelSource.reason === undefined,
+      JSON.stringify(modelSource ?? null),
+    );
+    check(
+      "a bundle written before the engine recorded it parses without one",
+      parseEvidenceBundle({ sample: { type: "invoice", id: 1 }, citations: [], gaps: [] })
+        ?.defenseSource === undefined,
+    );
+    check(
+      "a defenseSource with an unknown source is dropped rather than rendered",
+      parseEvidenceBundle({
+        sample: { type: "invoice", id: 1 },
+        citations: [],
+        gaps: [],
+        defenseSource: { source: "guessed", reason: "x" },
+      })?.defenseSource === undefined,
+    );
   } finally {
     await deleteProbeRun(created.runId);
   }

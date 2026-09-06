@@ -1,4 +1,11 @@
-import type { Citation, EvidenceBundle, Gap, SampleRef, SampleType } from "./evidence-types";
+import type {
+  Citation,
+  DefenseSource,
+  Gap,
+  ParsedEvidenceBundle,
+  SampleRef,
+  SampleType,
+} from "./evidence-types";
 
 // audit_exchanges.evidence is jsonb written by the accountant. It is typed as
 // EvidenceBundle in the schema, but a column typed in TypeScript is not a
@@ -8,7 +15,7 @@ import type { Citation, EvidenceBundle, Gap, SampleRef, SampleType } from "./evi
 
 const SAMPLE_TYPES = new Set<string>(["bank_transaction", "invoice", "dodo_transaction"]);
 
-export function parseEvidenceBundle(value: unknown): EvidenceBundle | undefined {
+export function parseEvidenceBundle(value: unknown): ParsedEvidenceBundle | undefined {
   const raw = typeof value === "string" ? safeJsonParse(value) : value;
   if (!isRecord(raw)) return undefined;
 
@@ -22,11 +29,25 @@ export function parseEvidenceBundle(value: unknown): EvidenceBundle | undefined 
     ? raw.gaps.map(parseGap).filter((g): g is Gap => g !== null)
     : [];
 
-  const bundle: EvidenceBundle = { sample, citations, gaps };
+  const bundle: ParsedEvidenceBundle = { sample, citations, gaps };
   if (typeof raw.defense === "string" && raw.defense.trim().length > 0) {
     bundle.defense = raw.defense;
   }
+  // Rebuilding the bundle field by field is what keeps a malformed row from
+  // reaching the screen, but it also means anything not named here is dropped.
+  // defenseSource has to be carried explicitly for that reason.
+  const defenseSource = parseDefenseSource(raw.defenseSource);
+  if (defenseSource) bundle.defenseSource = defenseSource;
   return bundle;
+}
+
+function parseDefenseSource(value: unknown): DefenseSource | null {
+  if (!isRecord(value)) return null;
+  const { source, reason } = value;
+  if (source !== "model" && source !== "fallback") return null;
+  // The engine omits `reason` entirely for a model-written defense, so its
+  // absence is normal rather than a malformed row.
+  return typeof reason === "string" && reason.length > 0 ? { source, reason } : { source };
 }
 
 function parseSampleRef(value: unknown): SampleRef | null {

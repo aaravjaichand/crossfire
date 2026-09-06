@@ -162,6 +162,16 @@ function Message({ message }: { message: MessageView }) {
             Procedure · {procedureLabel(message.procedure)}
           </div>
         ) : null}
+        {/* Only the fallback is worth saying. A model-written defense is the
+            normal case, and labelling it would be noise on every turn. */}
+        {message.evidence?.defenseSource?.source === "fallback" ? (
+          <div
+            className="mb-1 text-[11px] text-ink-3"
+            title={message.evidence.defenseSource.reason || undefined}
+          >
+            Assembled from evidence
+          </div>
+        ) : null}
         <p className={`text-[13px] leading-relaxed ${isReferee ? "text-ink-2" : "text-ink"}`}>
           <Prose text={message.content} />
         </p>
