@@ -26,9 +26,27 @@ export type GapKind =
 
 export type Gap = { kind: GapKind; description: string };
 
+/**
+ * Where the defense prose came from. Kept beside the prose rather than inside
+ * it: the fact that a paragraph was assembled from rows instead of written by
+ * the model is provenance, not something the accountant should say out loud in
+ * front of a reader. The UI can render it as a small label.
+ */
+export type DefenseSource = {
+  source: "model" | "fallback";
+  /** Why the fallback was used. Absent when source is "model". */
+  reason?: string;
+};
+
 export type EvidenceBundle = {
   sample: SampleRef;
   citations: Citation[];
   gaps: Gap[];
   defense?: string; // LLM-written paragraph, present only after the LLM step
+  /**
+   * Provenance for `defense`. Additive on purpose: the referee module rebuilds
+   * bundles field by field and reads `defense` as a string, so this could not
+   * be nested inside it without breaking that parser.
+   */
+  defenseSource?: DefenseSource;
 };

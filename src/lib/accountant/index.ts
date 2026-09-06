@@ -14,7 +14,13 @@ export async function defend(
 }
 
 export { gatherEvidence, MATCHING, classifyLedgerRows } from "./gather";
-export { writeDefense, buildDefensePrompt, llmDisabled, type DefendOptions } from "./defend";
+export {
+  writeDefense,
+  buildDefensePrompt,
+  llmDisabled,
+  llmForcedToFail,
+  type DefendOptions,
+} from "./defend";
 export {
   buildFallbackDefense,
   finalizeDefense,
@@ -35,6 +41,7 @@ export { parseSampleId, formatSampleId, SAMPLE_ID_HELP } from "./sample";
 export { toCents, usd } from "./money";
 export type {
   Citation,
+  DefenseSource,
   EvidenceBundle,
   Gap,
   GapKind,

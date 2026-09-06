@@ -1,6 +1,11 @@
 // Run inputs and their defaults. Kept out of start.ts because that file is a
 // "use server" module, which may only export async functions.
-import { parseCycles, type AuditCycle } from "@/lib/auditor/cycles";
+import { CYCLES, parseCycles, type AuditCycle } from "@/lib/auditor/cycles";
+
+// Re-exported so callers that already depend on the engine's inputs do not
+// need a second import path for the cycle list. The list itself is defined in
+// src/lib/auditor/cycles.ts, next to the sampler that applies it.
+export { CYCLES, parseCycles, type AuditCycle };
 
 /**
  * Above the largest single record in Northwind Labs' FY2025 books ($49,900),

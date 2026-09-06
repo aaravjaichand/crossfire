@@ -88,23 +88,18 @@ export function finalizeDefense(modelText: string, bundle: EvidenceBundle): Fina
 }
 
 export type FallbackOptions = {
-  /**
-   * Replaces the default opening sentence, which explains the fallback as a
-   * rejected model paragraph. Set it when the fallback was chosen for another
-   * reason (no model configured, the call failed) so the prose does not
-   * misdescribe what happened.
-   */
-  preamble?: string;
   /** Auditor follow-ups this answer is responding to, if any. */
   followUps?: readonly string[];
 };
 
-const DEFAULT_FALLBACK_PREAMBLE =
-  "This response is assembled from the gathered rows rather than written by the model, because the drafted wording did not cite the evidence it relied on.";
-
 /**
  * The deterministic defense: every sentence is built from rows already in the
  * bundle, so it satisfies the invariant by construction. No model call.
+ *
+ * The prose opens on the evidence, never on itself. That this paragraph was
+ * assembled rather than written is provenance, and it travels beside the prose
+ * as EvidenceBundle.defenseSource (see writeDefense), not inside it: a reader
+ * should meet the evidence first, not an apology for how it was worded.
  */
 export function buildFallbackDefense(
   bundle: EvidenceBundle,
@@ -117,10 +112,7 @@ export function buildFallbackDefense(
   }
 
   const anchor = `[${primary.table}#${primary.id}]`;
-  const sentences = [
-    options.preamble ?? DEFAULT_FALLBACK_PREAMBLE,
-    `Sample ${sampleId} rests on ${describe(primary)}.`,
-  ];
+  const sentences = [`Sample ${sampleId} rests on ${describe(primary)}.`];
 
   const supporting = rest.slice(0, 4);
   if (supporting.length > 0) {

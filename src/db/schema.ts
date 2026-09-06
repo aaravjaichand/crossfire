@@ -114,6 +114,11 @@ export const auditSamples = pgTable("audit_samples", {
   // needs_more verdict; every other verdict clears it in the same transaction
   // that files the ruling.
   pendingFollowUp: text("pending_follow_up"),
+  // Lease held while a worker is settling this sample. Claimed atomically so
+  // two concurrent advance calls can never work the same sample; a lease older
+  // than CLAIM_LEASE_MS is reclaimable, so a process killed mid-sample (a
+  // serverless invocation ending) does not strand it. See src/lib/engine/run.ts.
+  claimedAt: timestamp("claimed_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

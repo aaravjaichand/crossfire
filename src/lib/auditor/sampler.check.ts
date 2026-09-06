@@ -15,12 +15,16 @@
  *      cycles partition it exactly, and materiality-first selection picks
  *      every record at or above it while leaving the risk-weighted draw with
  *      no forced picks bit-for-bit what it was before materiality existed.
+ *      A materiality low enough to force more records than the target sample
+ *      size returns all of them, with no risk-weighted fill: materiality
+ *      outranks sample_size, which is the point of the input.
  *
  * Needs DATABASE_URL pointed at a seeded crossfire_b for check 3; checks 1
  * and 2 make no database calls.
  */
 import "./load-env";
 import { CYCLES } from "./cycles";
+import { usd } from "./util";
 import {
   filterByCycles,
   firstSeenDatesByYear,
@@ -118,6 +122,28 @@ async function checkAgainstDatabase() {
   check(
     "a materiality above every record leaves the risk-weighted draw untouched",
     noForcedKeys.length === keysA.length && noForcedKeys.every((k, i) => k === keysA[i]),
+  );
+
+  // Materiality outranks the target sample size on purpose: "every material
+  // item is tested" is the whole reason the input exists, so a low materiality
+  // is allowed to draw more than sample_size and the risk-weighted fill simply
+  // has no slots left. Worth pinning down, because the consequence is that
+  // such a run consists only of the cycles that hold material rows.
+  const LOW_MATERIALITY = 1_000_000; // $10,000
+  const overflowing = pickSamples(candidates, seed, 25, { materialityCents: LOW_MATERIALITY });
+  const allMaterial = candidates.filter((c) => Math.abs(c.amountCents) >= LOW_MATERIALITY);
+  const overflowKeys = new Set(overflowing.map((p) => `${p.sampleType}:${p.sampleId}`));
+  check(
+    "forced picks beyond the target sample size are all still returned",
+    allMaterial.length > 25 &&
+      overflowing.length === allMaterial.length &&
+      allMaterial.every((c) => overflowKeys.has(`${c.sampleType}:${c.sampleId}`)),
+    `${allMaterial.length} at or above ${usd(LOW_MATERIALITY)} against a target of 25, ${overflowing.length} picked`,
+  );
+  check(
+    "when forced picks fill the run there is no risk-weighted fill left to add",
+    overflowing.every((p) => Math.abs(p.amountCents) >= LOW_MATERIALITY),
+    `cycles represented: ${[...new Set(overflowing.map((p) => p.cycle))].sort().join(", ")}`,
   );
 }
 
