@@ -14,12 +14,13 @@ export function SampleList({
   return (
     <nav
       aria-label="Samples"
-      className="min-h-0 overflow-y-auto border-r border-neutral-800 bg-neutral-950"
+      className="min-h-0 overflow-y-auto rounded-xl border border-line bg-paper shadow-[0_5px_18px_rgba(0,0,0,0.045)]"
     >
-      <div className="sticky top-0 z-10 border-b border-neutral-800 bg-neutral-950 px-3 py-2 text-[11px] uppercase tracking-wide text-neutral-500">
-        Samples ({samples.length})
+      <div className="sticky top-0 z-10 flex items-baseline justify-between border-b border-line bg-paper px-3.5 py-2.5">
+        <span className="text-[12px] font-medium">Samples</span>
+        <span className="font-mono text-[11px] text-ink-3 num">{samples.length}</span>
       </div>
-      <ul>
+      <ul className="space-y-1 p-1.5">
         {samples.map((sample) => {
           const meta = STATUS_META[sample.status];
           const selected = sample.id === selectedId;
@@ -28,32 +29,27 @@ export function SampleList({
               <Link
                 href={`/audit/${encodeURIComponent(runId)}?s=${encodeURIComponent(sample.id)}`}
                 aria-current={selected ? "true" : undefined}
-                className={`block border-b border-neutral-900 border-l-2 px-3 py-2 transition-colors ${
+                className={`grid grid-cols-[16px_minmax(0,1fr)_auto] gap-x-2.5 rounded-lg px-3 py-2.5 transition-colors ${
                   selected
-                    ? "border-l-neutral-400 bg-neutral-900"
-                    : "border-l-transparent hover:bg-neutral-900/50"
+                    ? "bg-accent-soft"
+                    : "hover:bg-paper-2"
                 }`}
               >
-                <div className="flex items-baseline justify-between gap-2">
-                  <span className="font-mono text-[10px] uppercase tracking-wide text-neutral-500">
-                    {TYPE_LABEL[sample.type]} {sample.id.split(":")[1]}
-                  </span>
-                  <span className="font-mono text-xs tabular-nums text-neutral-300">
-                    {formatMoney(sample.amount)}
-                  </span>
-                </div>
-                <div className="mt-0.5 truncate text-[13px] text-neutral-200" title={sample.label}>
+                <span
+                  className={`row-span-2 pt-0.5 font-mono text-[13px] leading-none ${meta.text}`}
+                  title={`${meta.label}: ${meta.hint}`}
+                  aria-label={meta.label}
+                >
+                  {meta.mark}
+                </span>
+                <span className="truncate text-[12.5px] font-medium" title={sample.label}>
                   {sample.label}
-                </div>
-                <div className="mt-1 flex items-center justify-between gap-2">
-                  <span className="font-mono text-[11px] text-neutral-500 tabular-nums">
-                    {sample.date}
-                  </span>
-                  <span className="flex items-center gap-1.5" title={meta.hint}>
-                    <span className={`h-1.5 w-1.5 rounded-full ${meta.dot}`} aria-hidden />
-                    <span className={`text-[11px] ${meta.text}`}>{meta.label}</span>
-                  </span>
-                </div>
+                </span>
+                <span className="font-mono text-[12px] num">{formatMoney(sample.amount)}</span>
+                <span className="text-[11.5px] text-ink-3">
+                  {TYPE_LABEL[sample.type]} {sample.id.split(":")[1]}
+                </span>
+                <span className="font-mono text-[11px] text-ink-3 num">{sample.date}</span>
               </Link>
             </li>
           );

@@ -45,7 +45,8 @@ export function RefereeControls({
   return (
     <div className="flex items-center gap-2">
       {error ? (
-        <span className="max-w-64 truncate text-xs text-rose-300" title={error} role="alert">
+        <span className="max-w-64 truncate text-[12px] text-ink" title={error} role="alert">
+          <span className="mr-1 font-mono">△</span>
           {error}
         </span>
       ) : null}
@@ -65,42 +66,28 @@ export function RefereeControls({
             maxLength={500}
             placeholder="Tell the accountant where to look"
             aria-label="Redirect note"
-            className="h-8 w-72 rounded border border-neutral-700 bg-neutral-900 px-2 text-[13px] text-neutral-100 placeholder:text-neutral-600 focus:border-neutral-500 focus:outline-none"
+            className="input w-72"
           />
-          <Button type="submit" disabled={pending || note.trim().length === 0}>
-            Send
-          </Button>
-          <Button type="button" onClick={() => setShowNote(false)} disabled={pending}>
+          <button type="submit" className="btn btn-solid" disabled={pending || note.trim().length === 0}>
+            Send redirect
+          </button>
+          <button type="button" className="btn" onClick={() => setShowNote(false)} disabled={pending}>
             Cancel
-          </Button>
+          </button>
         </form>
       ) : (
         <>
-          <Button onClick={() => run(() => approve(input))} disabled={pending}>
+          <button type="button" className="btn btn-solid" onClick={() => run(() => approve(input))} disabled={pending}>
             Approve
-          </Button>
-          <Button onClick={() => setShowNote(true)} disabled={pending}>
+          </button>
+          <button type="button" className="btn" onClick={() => setShowNote(true)} disabled={pending}>
             Redirect
-          </Button>
-          <Button onClick={() => run(() => concede(input))} disabled={pending}>
+          </button>
+          <button type="button" className="btn" onClick={() => run(() => concede(input))} disabled={pending}>
             Concede
-          </Button>
+          </button>
         </>
       )}
     </div>
-  );
-}
-
-function Button({
-  children,
-  ...props
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & { children: React.ReactNode }) {
-  return (
-    <button
-      {...props}
-      className="h-8 rounded border border-neutral-700 bg-neutral-900 px-3 text-[13px] text-neutral-200 transition-colors hover:border-neutral-500 hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-40"
-    >
-      {children}
-    </button>
   );
 }

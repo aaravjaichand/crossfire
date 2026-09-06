@@ -1,39 +1,18 @@
 import type { SampleStatus } from "@/lib/referee/data";
 
-// Four muted dot colors, each paired with the text label that carries the same
-// meaning for anyone who cannot separate them by hue.
+// Audit tickmarks. Shape carries the status, so nothing depends on hue.
 export const STATUS_META: Record<
   SampleStatus,
-  { label: string; dot: string; text: string; hint: string }
+  { label: string; mark: string; text: string; hint: string }
 > = {
-  open: {
-    label: "Open",
-    dot: "bg-slate-400/80",
-    text: "text-slate-300",
-    hint: "Awaiting the referee",
-  },
-  defended: {
-    label: "Defended",
-    dot: "bg-emerald-500/80",
-    text: "text-emerald-300",
-    hint: "Evidence accepted",
-  },
-  gap: {
-    label: "Gap",
-    dot: "bg-amber-500/80",
-    text: "text-amber-300",
-    hint: "Accountant admitted a gap",
-  },
-  conceded: {
-    label: "Conceded",
-    dot: "bg-rose-500/70",
-    text: "text-rose-300",
-    hint: "Referee recorded a finding",
-  },
+  open: { label: "Open", mark: "○", text: "text-ink-3", hint: "Awaiting the referee" },
+  defended: { label: "Defended", mark: "✓", text: "text-accent", hint: "Evidence accepted" },
+  gap: { label: "Gap", mark: "△", text: "text-warning", hint: "Accountant admitted a gap" },
+  conceded: { label: "Conceded", mark: "✕", text: "text-danger", hint: "Referee recorded a finding" },
 };
 
 export const TYPE_LABEL: Record<string, string> = {
-  invoice: "INV",
-  bank_transaction: "BANK",
-  dodo_transaction: "DODO",
+  invoice: "Invoice",
+  bank_transaction: "Bank",
+  dodo_transaction: "Dodo",
 };
