@@ -7,6 +7,7 @@
 // picks, every time.
 import { inArray } from "drizzle-orm";
 import { db, schema } from "@/db";
+import { PAYROLL_COUNTERPARTY, type AuditCycle } from "./cycles";
 import type { SampleType } from "./evidence-types";
 import { Rng, weightedSampleIndices } from "./rng";
 import { isMonthEnd, toCents, usd, yearOf } from "./util";
@@ -16,6 +17,7 @@ export type SampleCandidate = {
   sampleId: number;
   amountCents: number; // signed for bank_transactions, unsigned for invoices/dodo
   date: string;
+  cycle: AuditCycle;
   riskScore: number;
   riskReasons: string[];
 };
@@ -102,10 +104,11 @@ export function yearKey(date: string, key: string): string {
 }
 
 export async function buildCandidates(): Promise<SampleCandidate[]> {
-  const [bankRows, invoiceRows, dodoRows, priorFlagRows] = await Promise.all([
+  const [bankRows, invoiceRows, dodoRows, vendorRows, priorFlagRows] = await Promise.all([
     db.select().from(schema.bankTransactions).orderBy(schema.bankTransactions.id),
     db.select().from(schema.invoices).orderBy(schema.invoices.id),
     db.select().from(schema.dodoTransactions).orderBy(schema.dodoTransactions.id),
+    db.select({ name: schema.vendors.name }).from(schema.vendors).orderBy(schema.vendors.id),
     db
       .select({
         sampleType: schema.auditSamples.sampleType,
@@ -116,6 +119,7 @@ export async function buildCandidates(): Promise<SampleCandidate[]> {
   ]);
 
   const priorFlagSet = new Set(priorFlagRows.map((f) => `${f.sampleType}:${f.sampleId}`));
+  const vendorNames = new Set(vendorRows.map((v) => v.name));
   const candidates: SampleCandidate[] = [];
 
   // ---- bank_transactions ----
@@ -159,6 +163,7 @@ export async function buildCandidates(): Promise<SampleCandidate[]> {
       sampleId: b.id,
       amountCents: cents,
       date: b.date,
+      cycle: bankCycle(b.counterparty, vendorNames),
       riskScore: score,
       riskReasons: reasons,
     });
@@ -205,6 +210,7 @@ export async function buildCandidates(): Promise<SampleCandidate[]> {
       sampleId: i.id,
       amountCents: cents,
       date: i.issueDate,
+      cycle: "purchases",
       riskScore: score,
       riskReasons: reasons,
     });
@@ -251,6 +257,7 @@ export async function buildCandidates(): Promise<SampleCandidate[]> {
       sampleId: d.id,
       amountCents: cents,
       date: d.date,
+      cycle: "revenue",
       riskScore: Math.round(score * 10_000) / 10_000,
       riskReasons: reasons,
     });
@@ -263,19 +270,75 @@ export async function buildCandidates(): Promise<SampleCandidate[]> {
 }
 
 /**
- * Weighted selection without replacement, deterministic given `seed`.
- * Every candidate keeps a small floor weight so low-risk records still have
- * a (tiny) chance of being sampled, matching real audit sampling practice.
+ * Which cycle a bank row belongs to. Payroll and vendor payments are named
+ * explicitly; everything else (Dodo payout settlements, bank fees, interest,
+ * and payments to counterparties that are not vendors) is cash.
+ */
+function bankCycle(counterparty: string, vendorNames: Set<string>): AuditCycle {
+  if (counterparty === PAYROLL_COUNTERPARTY) return "payroll";
+  if (vendorNames.has(counterparty)) return "purchases";
+  return "cash";
+}
+
+/**
+ * Restricts the candidate pool to the run's cycles, preserving order. Passing
+ * every cycle returns the input list unchanged, so the default run samples
+ * from exactly the pool it always did.
+ */
+export function filterByCycles(
+  candidates: SampleCandidate[],
+  cycles: readonly AuditCycle[],
+): SampleCandidate[] {
+  const wanted = new Set(cycles);
+  return candidates.filter((c) => wanted.has(c.cycle));
+}
+
+export type PickOptions = {
+  /**
+   * Materiality in cents. Every candidate at or above it is sampled outright,
+   * before any random draw. Omitted (or set above the largest record in the
+   * books) means no forced picks and pure risk-weighted sampling.
+   */
+  materialityCents?: number;
+};
+
+/**
+ * Materiality first, then risk-weighted fill.
+ *
+ * Everything at or above materiality is always picked — that is the point of
+ * materiality, and it is what makes a run defensible: no material item was
+ * left to chance. The remaining slots up to `count` are drawn from the rest
+ * with weighted selection without replacement, deterministic given `seed`.
+ * Every candidate keeps a small floor weight so low-risk records still have a
+ * (tiny) chance of being sampled, matching real audit sampling practice.
+ *
+ * `count` is a target, not a cap: if more candidates clear materiality than
+ * `count`, all of them are still returned. With no forced picks the draw is
+ * bit-for-bit what it was before materiality existed, so an existing seed
+ * still reproduces its run.
  */
 export function pickSamples(
   candidates: SampleCandidate[],
   seed: number,
   count = 25,
+  options: PickOptions = {},
 ): SampleCandidate[] {
+  const materiality = options.materialityCents;
+  const forced: SampleCandidate[] = [];
+  const rest: SampleCandidate[] = [];
+  for (const candidate of candidates) {
+    if (materiality !== undefined && Math.abs(candidate.amountCents) >= materiality) {
+      forced.push(candidate);
+    } else {
+      rest.push(candidate);
+    }
+  }
+
   const rng = new Rng(seed);
-  const weights = candidates.map((c) => Math.max(c.riskScore, 0.02));
-  const idx = weightedSampleIndices(rng, weights, Math.min(count, candidates.length));
-  const picked = idx.map((i) => candidates[i]);
+  const weights = rest.map((c) => Math.max(c.riskScore, 0.02));
+  const fill = Math.max(0, Math.min(count - forced.length, rest.length));
+  const idx = weightedSampleIndices(rng, weights, fill);
+  const picked = [...forced, ...idx.map((i) => rest[i])];
   // Stable display/storage order, independent of the internal sampling walk.
   return picked.sort(
     (a, b) => a.sampleType.localeCompare(b.sampleType) || a.sampleId - b.sampleId,

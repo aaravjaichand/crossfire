@@ -107,6 +107,11 @@ export const auditSamples = pgTable("audit_samples", {
   riskReasons: jsonb("risk_reasons").notNull().$type<string[]>(),
   // open | defended | gap | conceded
   status: text("status").notNull().default("open"),
+  // Set by the referee when a ruling sends a sample back for more work: the
+  // controller's note, which the engine appends to the accountant's search
+  // context on the next pass and then clears. Owned by the referee module;
+  // declared here so the engine can read and clear it.
+  pendingFollowUp: text("pending_follow_up"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -124,6 +129,10 @@ export const auditExchanges = pgTable("audit_exchanges", {
   // auditor | accountant
   role: text("role").notNull(),
   questionTemplateId: text("question_template_id"),
+  // Audit procedure this turn exercises, set on role="auditor" rows only:
+  // three_way_match | cutoff | unrecorded_liabilities | bank_rec |
+  // revenue_tie_out | approval_control. See src/lib/auditor/questions.ts.
+  procedure: text("procedure"),
   content: text("content").notNull(),
   // Set when role = accountant. EvidenceBundle is the canonical type from
   // src/lib/accountant/types.ts.
@@ -151,13 +160,30 @@ export const learnedRules = pgTable("learned_rules", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
-// One row per auditor CLI/app run. Appended here per Worker B's ownership.
+// One row per auditor CLI/app run, with the inputs the run was started with
+// so it can be reproduced exactly.
 export const auditRuns = pgTable("audit_runs", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
-  // running | complete
+  // running | complete | failed
   status: text("status").notNull(),
   sampleCount: integer("sample_count").notNull(),
   notes: text("notes"),
+  // ---- run inputs ----
+  // PRNG seed. Same seed + same books + same inputs => same picks.
+  seed: integer("seed").notNull().default(1),
+  // Materiality in cents. Every candidate at or above this is always sampled.
+  materiality: integer("materiality").notNull().default(5_000_000),
+  // Target sample size; materiality-forced picks may push the run past it.
+  sampleSize: integer("sample_size").notNull().default(25),
+  // Subset of: purchases, cash, revenue, payroll.
+  cycles: jsonb("cycles")
+    .notNull()
+    .$type<string[]>()
+    .default(["purchases", "cash", "revenue", "payroll"]),
+  // ---- progress ----
+  // Samples settled so far (defended or gap), for polling while status is
+  // "running". Always incremented in SQL, never read-modify-written.
+  progress: integer("progress").notNull().default(0),
 });
