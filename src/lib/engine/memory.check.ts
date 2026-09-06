@@ -36,7 +36,7 @@
  * Requires DATABASE_URL pointed at a seeded database; makes no network calls.
  */
 import "@/lib/auditor/load-env";
-import { and, asc, eq, inArray, like } from "drizzle-orm";
+import { and, asc, eq, inArray, like, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import {
   loadSampleMemory,
@@ -48,6 +48,7 @@ import {
 import type { SampleRef, SampleType } from "@/lib/accountant/types";
 import { parseEvidenceBundle } from "@/lib/referee/parse-evidence";
 import { recordDecision } from "@/lib/referee/decide";
+import { formatSampleId } from "@/lib/referee/sample-id";
 import { prepareRun } from "./start";
 import { runAudit } from "./run";
 
@@ -144,12 +145,50 @@ async function cleanupCheckRuns(): Promise<number> {
   return ids.length;
 }
 
-async function main() {
-  const cleared = await cleanupCheckRuns();
-  if (cleared > 0) {
-    console.log(`(removed ${cleared} run${cleared === 1 ? "" : "s"} left by an interrupted check)\n`);
-  }
+/**
+ * Rulings filed by earlier runs — the demo's, another check's — are memory too,
+ * and run 1 would honour them. On a database that has been used, that is what
+ * happens: a rule already on file settles the very samples run 1 needs to leave
+ * as gaps, run 1 opens with nothing for the controller to rule on, and the
+ * check cannot start. The pass/fail then depends on what happens to be in the
+ * table, which is not a check.
+ *
+ * So the check gives itself an empty memory to start from, the same way it
+ * gives itself its own runs. Parking is a rename, not a delete: prefixing the
+ * run key makes a rule fail loadSampleMemory's "numeric run keys only" filter,
+ * so the engine cannot see it, and unparking puts every row back exactly as it
+ * was. Nothing is destroyed, so an interrupted run costs the database its
+ * memory until the next invocation, which unparks before it does anything else.
+ *
+ * The check's own rules are filed while parking is in force and under numeric
+ * keys of its own, so they are visible to run 2 and are cleaned up by name.
+ */
+const PARK_PREFIX = "parked-by-memory-check:";
 
+async function parkPriorRules(): Promise<number> {
+  const rows = await db.execute<{ id: number }>(sql`
+    update learned_rules
+       set run_id = ${PARK_PREFIX} || run_id
+     where run_id ~ '^[0-9]+$'
+    returning id
+  `);
+  return rows.length;
+}
+
+async function unparkPriorRules(): Promise<number> {
+  const rows = await db.execute<{ id: number }>(sql`
+    update learned_rules
+       set run_id = replace(run_id, ${PARK_PREFIX}, '')
+     where run_id like ${`${PARK_PREFIX}%`}
+    returning id
+  `);
+  return rows.length;
+}
+
+/** Thrown when a precondition fails and the assertions below cannot mean anything. */
+class Bail extends Error {}
+
+async function runChecks() {
   // ---------- run 1 ----------
   const first = await prepareRun({
     name: "Memory check, run 1",
@@ -172,11 +211,7 @@ async function main() {
     firstResult.resolvedByMemory === 0,
     `${firstResult.resolvedByMemory} resolved by memory`,
   );
-  if (firstGaps.length < 2) {
-    console.log("\nCannot continue without two gaps to rule on.");
-    await cleanupCheckRuns();
-    process.exit(1);
-  }
+  if (firstGaps.length < 2) throw new Bail("Cannot continue without two gaps to rule on.");
 
   const accepted = firstGaps[0];
   const sentBack = firstGaps[1];
@@ -217,11 +252,7 @@ async function main() {
     Boolean(acceptRule) && Boolean(needsMoreRule),
     `${rules.length} rules: ${rules.map((r) => `#${r.id} ${r.verdict}/${r.gapKind}`).join(", ")}`,
   );
-  if (!acceptRule || !needsMoreRule) {
-    console.log("\nCannot continue without the two rules.");
-    await cleanupCheckRuns();
-    process.exit(1);
-  }
+  if (!acceptRule || !needsMoreRule) throw new Bail("Cannot continue without the two rules.");
 
   // ---------- the round trip ----------
   // The one thing that can fail silently: the referee files a rule under a
@@ -330,8 +361,8 @@ async function main() {
 
   const ids = await memoryResolvedIds(String(second.runId));
   check(
-    "the run screen can read which samples those were",
-    ids.has(`${accepted.sampleType}:${accepted.sampleId}`),
+    "the run screen can read which samples those were, keyed the way it keys samples",
+    ids.has(formatSampleId(refOf(accepted))),
     `[${[...ids].join(", ")}]`,
   );
 
@@ -401,6 +432,43 @@ async function main() {
     removed === 2 && (await rulesOf(first.runId)).length === 0,
     `${removed} runs removed`,
   );
+}
+
+async function main() {
+  // Before anything else, in case a previous invocation died between parking
+  // and restoring.
+  const recovered = await unparkPriorRules();
+  if (recovered > 0) {
+    console.log(`(restored ${recovered} rule${recovered === 1 ? "" : "s"} left parked by an interrupted check)`);
+  }
+  const cleared = await cleanupCheckRuns();
+  if (cleared > 0) {
+    console.log(`(removed ${cleared} run${cleared === 1 ? "" : "s"} left by an interrupted check)`);
+  }
+
+  const parked = await parkPriorRules();
+  if (parked > 0) {
+    console.log(
+      `(set ${parked} rule${parked === 1 ? "" : "s"} from earlier runs aside, so run 1 starts with an empty memory)`,
+    );
+  }
+  if (recovered > 0 || cleared > 0 || parked > 0) console.log("");
+
+  try {
+    await runChecks();
+  } catch (err) {
+    if (!(err instanceof Bail)) throw err;
+    failures++;
+    console.log(`\n${err.message}`);
+  } finally {
+    await cleanupCheckRuns();
+    const restored = await unparkPriorRules();
+    check(
+      "the rules it set aside are back on file, exactly as many as it parked",
+      restored === parked,
+      `${parked} parked, ${restored} restored`,
+    );
+  }
 
   console.log(
     `\n${failures === 0 ? "All" : "Some"} memory checks ran: ${failures} failure${failures === 1 ? "" : "s"}.`,
@@ -408,7 +476,9 @@ async function main() {
   process.exit(failures === 0 ? 0 : 1);
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
   console.error(err);
+  // Never leave the database without its memory because of a crash.
+  await unparkPriorRules().catch(() => {});
   process.exit(1);
 });

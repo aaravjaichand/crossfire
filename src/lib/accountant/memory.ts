@@ -24,6 +24,24 @@
  * carrying it forward would let a run mark its own findings resolved. A
  * `sufficient` verdict writes no rule at all.
  *
+ * Matching is exact and has exactly two terms, both plain string equality:
+ *
+ *   counterparty  Equality against learned_rules.counterparty. The written
+ *                 string comes from counterpartyOf() in referee/data.ts, off
+ *                 the sample's label; the string looked up comes from
+ *                 counterpartyFor() below, off the sample's row. Both resolve
+ *                 to the vendor name for an invoice, the bank counterparty for
+ *                 a payment, and the bare type for a Dodo row. Applied in SQL.
+ *   gap kind      Equality against the kind of gap the accountant just
+ *                 admitted, checked once, on the first defense. Both sides are
+ *                 GapKind slugs written by the same deterministic gatherer, so
+ *                 "rate_mismatch" matches "rate_mismatch" and nothing else.
+ *
+ * Neither term is fuzzy, scored, or model-assisted, so a rule matches or it
+ * does not, and two runs over the same books with the same rulings settle the
+ * same samples. Ties break towards the rule filed on this very row, and then
+ * towards the newest, so a controller who changes their mind is obeyed.
+ *
  * Three narrowing rules keep memory honest:
  *
  *   - Rules filed by the run being worked are excluded, or a run would teach
@@ -39,6 +57,7 @@ import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { TABLE_BY_SAMPLE_TYPE } from "@/lib/auditor/citation";
 import { loadSampleDetail } from "@/lib/auditor/detail";
+import { formatSampleId } from "@/lib/referee/sample-id";
 import type { Citation, EvidenceBundle, GapKind, SampleRef, SampleType } from "./types";
 
 /** audit_samples.resolution for a sample settled by a remembered ruling. */
@@ -255,9 +274,14 @@ export function buildMemoryTurn(ref: SampleRef, rule: LearnedRule, gapKind: stri
 }
 
 /**
- * The samples of a run that were settled by memory, as "invoice:5" ids, for
- * the run screen. Reads the persisted column rather than the thread, so the
- * screen and the binder agree without either of them guessing.
+ * The samples of a run that were settled by memory, for the run screen and the
+ * binder. Reads the persisted column rather than the thread, so the two agree
+ * without either of them guessing.
+ *
+ * Keyed by formatSampleId — "bank:109", not "bank_transaction:109" — because
+ * that is what SampleView.id is and what the screens match against. Building
+ * the string here from the raw column would spell the type out in full and
+ * quietly match nothing for a bank or a Dodo row.
  */
 export async function memoryResolvedIds(runKey: string): Promise<Set<string>> {
   if (!/^\d+$/.test(runKey)) return new Set();
@@ -273,7 +297,11 @@ export async function memoryResolvedIds(runKey: string): Promise<Set<string>> {
         eq(schema.auditSamples.resolution, MEMORY_RESOLUTION),
       ),
     );
-  return new Set(rows.map((r) => `${r.sampleType}:${r.sampleId}`));
+  return new Set(
+    rows
+      .filter((r) => isSampleType(r.sampleType))
+      .map((r) => formatSampleId({ type: r.sampleType as SampleType, id: r.sampleId })),
+  );
 }
 
 // ---------- internals ----------

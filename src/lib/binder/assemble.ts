@@ -104,16 +104,28 @@ export type BinderView = {
 /** The legend printed at the foot of the binder. */
 export const TICKMARKS: { mark: string; meaning: string }[] = [
   { mark: "✓", meaning: "Vouched. Evidence agreed to the supporting document and the ledger." },
+  {
+    mark: "◆",
+    meaning:
+      "Resolved by memory. Closed by a ruling the controller made on this counterparty in an earlier run; the ruling is quoted and cited in the exchange.",
+  },
   { mark: "△", meaning: "Gap. The accountant could not support the item; escalated to the controller." },
   { mark: "✕", meaning: "Exception. The controller recorded a finding; see the fix list." },
   { mark: "○", meaning: "Open. Still with the accountant at the time this binder was printed." },
 ];
 
-/** The inputs that are on audit_runs but not on RunView. See run-inputs.ts. */
-export type BinderExtras = { seed?: number; startedAt?: Date };
+/**
+ * The inputs that are on audit_runs but not on RunView (see run-inputs.ts),
+ * plus the samples audit_samples.resolution marks as settled from run memory,
+ * keyed the way SampleView ids are. That column is not on RunView either, so
+ * the page reads it with memoryResolvedIds() and passes it in here.
+ */
+export type BinderExtras = { seed?: number; startedAt?: Date; memoryResolved?: Set<string> };
 
 export function buildBinder(run: RunView, extras: BinderExtras = {}): BinderView {
-  const sections = run.samples.map((sample, i) => buildSection(sample, i + 1));
+  const sections = run.samples.map((sample, i) =>
+    buildSection(sample, i + 1, extras.memoryResolved?.has(sample.id) ?? false),
+  );
 
   const fixList: FixItem[] = [];
   const awaiting: FixItem[] = [];
@@ -156,7 +168,7 @@ export function buildBinder(run: RunView, extras: BinderExtras = {}): BinderView
   };
 }
 
-function buildSection(sample: SampleView, index: number): BinderSection {
+function buildSection(sample: SampleView, index: number, byMemory: boolean): BinderSection {
   const evidence = latestEvidence(sample);
   const procedureId = sample.thread.find((m) => m.role === "auditor" && m.procedure)?.procedure ?? null;
   const gaps = evidence?.gaps ?? [];
@@ -176,8 +188,8 @@ function buildSection(sample: SampleView, index: number): BinderSection {
     citations: evidence?.citations ?? [],
     gaps,
     ruling: sample.ruling,
-    disposition: disposition(sample),
-    tickmark: tickmark(sample),
+    disposition: disposition(sample, byMemory),
+    tickmark: tickmark(sample, byMemory),
   };
 
   if (gaps.length > 0 || ruledException) {
@@ -203,7 +215,7 @@ function buildSection(sample: SampleView, index: number): BinderSection {
 }
 
 /** One sentence a reviewer can read on its own, naming who decided. */
-function disposition(sample: SampleView): string {
+function disposition(sample: SampleView, byMemory: boolean): string {
   const ruling = sample.ruling;
   if (ruling) {
     const head = `${VERDICT_LABEL[ruling.verdict]} — ruled by the controller`;
@@ -219,6 +231,11 @@ function disposition(sample: SampleView): string {
     }
     return `${head}. The evidence supports the balance as filed.`;
   }
+  // Checked after a ruling made on this run, which is the later judgement and
+  // must not be overwritten by one carried forward.
+  if (byMemory) {
+    return "Resolved by memory — closed by the controller's ruling on this counterparty in an earlier run, quoted and cited in the exchange above. No new ruling was required.";
+  }
   if (sample.status === "defended") {
     return "Defended — the auditor's follow-up policy accepted the evidence; no controller ruling was required.";
   }
@@ -231,8 +248,9 @@ function disposition(sample: SampleView): string {
   return "Open — still with the accountant when this binder was printed.";
 }
 
-function tickmark(sample: SampleView): string {
+function tickmark(sample: SampleView, byMemory: boolean): string {
   if (sample.ruling?.verdict === "exception") return "✕";
+  if (byMemory) return "◆";
   if (sample.status === "defended") return "✓";
   if (sample.status === "gap") return "△";
   if (sample.status === "conceded") return "✕";

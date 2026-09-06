@@ -12,6 +12,7 @@
  */
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { memoryResolvedIds } from "@/lib/accountant/memory";
 import { buildBinder, loadRunInputs, TICKMARKS, type BinderSection, type BinderView, type FixItem } from "@/lib/binder";
 import { formatMoney, getRun, type MessageView } from "@/lib/referee/data";
 import type { Citation } from "@/lib/referee/evidence-types";
@@ -38,7 +39,8 @@ export default async function BinderPage({ params }: { params: Promise<{ runId: 
   if (!run) notFound();
 
   const extras = await loadRunInputs(run.id).catch(() => ({}));
-  const binder = buildBinder(run, extras);
+  const memoryResolved = await memoryResolvedIds(run.id);
+  const binder = buildBinder(run, { ...extras, memoryResolved });
 
   return (
     <main className="h-full overflow-y-auto bg-paper-2 print:h-auto print:overflow-visible print:bg-paper">

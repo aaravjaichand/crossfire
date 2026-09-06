@@ -12,6 +12,7 @@ import { asc, desc, inArray } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { counterpartyFor, MEMORY_RESOLUTION } from "@/lib/accountant/memory";
 import type { SampleType } from "@/lib/accountant/types";
+import { formatSampleId } from "@/lib/referee/sample-id";
 
 export type RunSide = {
   id: number;
@@ -54,19 +55,38 @@ export type RunComparison = {
 /** Recurring items shown before the panel starts summarising the rest. */
 export const MAX_RECURRING = 6;
 
+/** How far back to look for a run the latest one can honestly be compared to. */
+const LOOKBACK = 24;
+
 type SampleRow = typeof schema.auditSamples.$inferSelect;
+type RunRow = typeof schema.auditRuns.$inferSelect;
 
 /**
- * The two most recent runs, older first, or null when there is only one run to
- * look at. Runs with no samples are skipped: a run that never drew a sample has
- * no coverage to compare.
+ * The inputs a run drew its sample from. Two runs are comparable when these
+ * agree: coverage over six purchases samples at $21,000 materiality is not the
+ * same measurement as coverage over twenty-five samples across four cycles, and
+ * putting the two percentages side by side under "since the last run" would
+ * invent a trend out of a change of scope.
+ */
+function inputs(run: RunRow): string {
+  return JSON.stringify([run.seed, run.materiality, run.sampleSize, [...(run.cycles ?? [])].sort()]);
+}
+
+/**
+ * The two most recent comparable runs, older first, or null when there is no
+ * such pair to show.
+ *
+ * A run qualifies only once it has settled every sample it drew. A run still in
+ * flight has no coverage number yet, and one whose samples were all left open —
+ * what a probe that persists rows without working them looks like — would read
+ * as 0% and slander the run before it.
  */
 export async function compareLatestRuns(): Promise<RunComparison | null> {
   const runs = await db
     .select()
     .from(schema.auditRuns)
     .orderBy(desc(schema.auditRuns.id))
-    .limit(8);
+    .limit(LOOKBACK);
   if (runs.length < 2) return null;
 
   const samples = await db
@@ -87,10 +107,18 @@ export async function compareLatestRuns(): Promise<RunComparison | null> {
     else byRun.set(sample.runId, [sample]);
   }
 
-  const withSamples = runs.filter((r) => (byRun.get(r.id)?.length ?? 0) > 0);
-  if (withSamples.length < 2) return null;
+  const settled = runs.filter((r) => {
+    const drawn = byRun.get(r.id) ?? [];
+    return drawn.length > 0 && drawn.every((s) => s.status !== "open");
+  });
+  if (settled.length < 2) return null;
 
-  const [latestRun, previousRun] = withSamples;
+  // Newest first, so the first match walking forward is the most recent run the
+  // latest one can be held against.
+  const [latestRun] = settled;
+  const previousRun = settled.slice(1).find((r) => inputs(r) === inputs(latestRun));
+  if (!previousRun) return null;
+
   const latest = side(latestRun, byRun.get(latestRun.id) ?? []);
   const previous = side(previousRun, byRun.get(previousRun.id) ?? []);
 
@@ -128,11 +156,14 @@ async function recurringItems(
   previous: SampleRow[],
   latest: SampleRow[],
 ): Promise<{ recurring: RecurringItem[]; recurringTotal: number }> {
-  const before = new Map(previous.map((s) => [`${s.sampleType}:${s.sampleId}`, s]));
+  // formatSampleId, not the raw column: `id` is handed to the run screen as
+  // ?s=, which matches it against SampleView.id ("bank:109").
+  const key = (s: SampleRow) => formatSampleId({ type: s.sampleType as SampleType, id: s.sampleId });
+  const before = new Map(previous.map((s) => [key(s), s]));
   const items: RecurringItem[] = [];
 
   for (const sample of latest) {
-    const id = `${sample.sampleType}:${sample.sampleId}`;
+    const id = key(sample);
     const earlier = before.get(id);
     if (!earlier || earlier.status === "defended") continue;
     items.push({
