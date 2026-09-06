@@ -11,9 +11,11 @@ import { STATUS_META, TYPE_LABEL, VERDICT_MARK } from "./status";
  * look at; everything else the accountant and the follow-up policy have
  * already settled. The toggle shows the whole run.
  *
- * The filter is on status alone, so ruling on a sample never makes a row
- * disappear from under the cursor. A ruled gap keeps its place and gains the
- * verdict beside it.
+ * The filter is on status alone. sufficient, needs_more, and accepted_with_note
+ * all move the sample off "gap", so ruling one of those does take the row out
+ * of the queue — which is the point of a queue. An exception leaves the status
+ * at "gap", so those rows stay, and the verdict beside them is the only thing
+ * separating a gap that has been ruled on from one that has not.
  */
 export function SampleList({
   runId,
@@ -26,7 +28,8 @@ export function SampleList({
 }) {
   const gaps = samples.filter((s) => s.status === "gap");
   // With no gaps there is nothing to rule on, and an empty pane would hide the
-  // run instead of describing it.
+  // run instead of describing it. The toggle is never disabled: ruling the last
+  // gap empties this list, and the toggle is the only way back to the run.
   const [needsRulingOnly, setNeedsRulingOnly] = useState(gaps.length > 0);
   const shown = needsRulingOnly ? gaps : samples;
   const unruled = gaps.filter((s) => !s.ruling).length;
@@ -53,8 +56,7 @@ export function SampleList({
             type="button"
             onClick={() => setNeedsRulingOnly((v) => !v)}
             aria-pressed={!needsRulingOnly}
-            disabled={gaps.length === 0}
-            className="text-[11px] text-ink-2 underline underline-offset-2 hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+            className="text-[11px] text-ink-2 underline underline-offset-2 hover:text-ink"
           >
             {needsRulingOnly ? `Show all ${samples.length}` : "Needs ruling only"}
           </button>
@@ -100,7 +102,11 @@ export function SampleList({
           );
         })}
         {shown.length === 0 ? (
-          <li className="px-3 py-4 text-[12px] text-ink-3">This run has no samples.</li>
+          <li className="px-3 py-4 text-[12px] text-ink-3">
+            {samples.length === 0
+              ? "This run has no samples."
+              : "Nothing left to rule on. Show all to review the run."}
+          </li>
         ) : null}
       </ul>
     </nav>
