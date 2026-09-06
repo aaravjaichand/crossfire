@@ -113,8 +113,8 @@ export function Conversation({
                 <li>
                   <article className="grid grid-cols-[6.5rem_minmax(0,1fr)] gap-x-4">
                     <div className="pt-px text-[12px] font-medium text-ink-2">Assistant</div>
-                    <div className="text-[11px] text-ink-3" aria-live="polite">
-                      Reading the books…
+                    <div className="text-[12.5px]" aria-live="polite">
+                      <span className="shimmer">Reading the books…</span>
                     </div>
                   </article>
                 </li>

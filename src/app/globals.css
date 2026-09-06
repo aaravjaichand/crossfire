@@ -121,9 +121,41 @@ input:focus-visible {
   font-variant-numeric: tabular-nums;
 }
 
+/* A soft highlight sweeping left to right through waiting text. The gradient
+   is three widths wide so the glow enters and leaves fully off the edges. */
+.shimmer {
+  display: inline-block;
+  color: transparent;
+  background-image: linear-gradient(
+    90deg,
+    var(--ink-3) 0%,
+    var(--ink-3) 44%,
+    var(--ink) 50%,
+    var(--ink-3) 56%,
+    var(--ink-3) 100%
+  );
+  background-size: 300% 100%;
+  background-repeat: no-repeat;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: shimmer 2.2s linear infinite;
+}
+@keyframes shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0% 0;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     transition-duration: 0ms !important;
     animation: none !important;
+  }
+  .shimmer {
+    color: var(--ink-3);
+    background: none;
   }
 }
