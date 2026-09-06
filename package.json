@@ -18,6 +18,7 @@
     "auditor:check-citation": "tsx src/lib/auditor/citation.check.ts",
     "auditor:check-sampler": "tsx src/lib/auditor/sampler.check.ts",
     "auditor:check-persist": "tsx src/lib/auditor/persist.check.ts",
+    "engine:check": "tsx src/lib/engine/run.check.ts",
     "auditor:check": "pnpm auditor:check-policy && pnpm auditor:check-citation && pnpm auditor:check-sampler && pnpm auditor:check-persist",
     "referee:check-citations": "tsx src/lib/referee/citations.check.ts",
     "referee:check-data": "tsx src/lib/referee/data.check.ts",

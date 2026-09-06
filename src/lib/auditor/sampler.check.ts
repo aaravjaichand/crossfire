@@ -10,12 +10,24 @@
  *      "top 0%", and the same seed still produces exactly 25 unique picks,
  *      identically, across two independent calls (regression guard so the
  *      wording/scoping fixes above didn't change the sampling contract).
+ *   4. Cycles and materiality, the two run inputs that shape the pool:
+ *      selecting every cycle is a no-op over the candidate list, the four
+ *      cycles partition it exactly, and materiality-first selection picks
+ *      every record at or above it while leaving the risk-weighted draw with
+ *      no forced picks bit-for-bit what it was before materiality existed.
  *
  * Needs DATABASE_URL pointed at a seeded crossfire_b for check 3; checks 1
  * and 2 make no database calls.
  */
 import "./load-env";
-import { firstSeenDatesByYear, percentileLabel, pickSamples, yearKey } from "./sampler";
+import { CYCLES } from "./cycles";
+import {
+  filterByCycles,
+  firstSeenDatesByYear,
+  percentileLabel,
+  pickSamples,
+  yearKey,
+} from "./sampler";
 
 let failures = 0;
 function check(name: string, ok: boolean, detail?: string) {
@@ -72,6 +84,41 @@ async function checkAgainstDatabase() {
   const keysB = picksB.map((p) => `${p.sampleType}:${p.sampleId}`);
   const identical = keysA.length === keysB.length && keysA.every((k, i) => k === keysB[i]);
   check("same seed produces identical picks across two independent calls", identical);
+
+  // ---- 4. cycles and materiality ----
+  const all = filterByCycles(candidates, CYCLES);
+  check(
+    "selecting every cycle returns the candidate list unchanged, in order",
+    all.length === candidates.length && all.every((c, i) => c === candidates[i]),
+    `${all.length} of ${candidates.length}`,
+  );
+
+  const perCycle = CYCLES.map((cycle) => filterByCycles(candidates, [cycle]).length);
+  check(
+    "the four cycles partition the candidates with no overlap and nothing left out",
+    perCycle.reduce((a, b) => a + b, 0) === candidates.length,
+    CYCLES.map((c, i) => `${c}=${perCycle[i]}`).join(" "),
+  );
+
+  // $21,000: above every purchases record except invoice #5 and the bank
+  // payment that settled it, so the forced set is small and known.
+  const MATERIALITY = 2_100_000;
+  const purchases = filterByCycles(candidates, ["purchases"]);
+  const material = purchases.filter((c) => Math.abs(c.amountCents) >= MATERIALITY);
+  const withMateriality = pickSamples(purchases, seed, 6, { materialityCents: MATERIALITY });
+  const drawn = new Set(withMateriality.map((p) => `${p.sampleType}:${p.sampleId}`));
+  check(
+    "every candidate at or above materiality is sampled outright",
+    material.length > 0 && material.every((c) => drawn.has(`${c.sampleType}:${c.sampleId}`)),
+    `${material.length} above materiality, ${withMateriality.length} picks`,
+  );
+
+  const noForcedPicks = pickSamples(candidates, seed, 25, { materialityCents: Number.MAX_SAFE_INTEGER });
+  const noForcedKeys = noForcedPicks.map((p) => `${p.sampleType}:${p.sampleId}`);
+  check(
+    "a materiality above every record leaves the risk-weighted draw untouched",
+    noForcedKeys.length === keysA.length && noForcedKeys.every((k, i) => k === keysA[i]),
+  );
 }
 
 checkAgainstDatabase()

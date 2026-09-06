@@ -3,15 +3,18 @@
  * LLM; `defend` is that plus exactly one model call to write the paragraph.
  */
 import { gatherEvidence } from "./gather";
-import { writeDefense } from "./defend";
+import { writeDefense, type DefendOptions } from "./defend";
 import type { EvidenceBundle, SampleRef } from "./types";
 
-export async function defend(sample: SampleRef): Promise<EvidenceBundle> {
-  return writeDefense(await gatherEvidence(sample));
+export async function defend(
+  sample: SampleRef,
+  options: DefendOptions = {},
+): Promise<EvidenceBundle> {
+  return writeDefense(await gatherEvidence(sample), options);
 }
 
 export { gatherEvidence, MATCHING, classifyLedgerRows } from "./gather";
-export { writeDefense, buildDefensePrompt } from "./defend";
+export { writeDefense, buildDefensePrompt, llmDisabled, type DefendOptions } from "./defend";
 export {
   buildFallbackDefense,
   finalizeDefense,

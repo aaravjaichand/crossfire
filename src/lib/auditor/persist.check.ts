@@ -46,8 +46,8 @@ async function main() {
   const prepared: PreparedSample[] = [];
   for (const candidate of picks) {
     const detail = await loadSampleDetail(candidate);
-    const { templateId, text } = chooseQuestion(candidate, detail);
-    prepared.push({ candidate, templateId, question: withSampleCitation(text, candidate) });
+    const { templateId, procedure, text } = chooseQuestion(candidate, detail);
+    prepared.push({ candidate, templateId, procedure, question: withSampleCitation(text, candidate) });
   }
   console.log(`Prepared ${prepared.length} sample questions with no LLM calls (template fallback text).\n`);
 

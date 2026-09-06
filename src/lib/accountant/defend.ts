@@ -4,7 +4,7 @@
  * told to admit a gap rather than argue around it.
  */
 import { complete } from "../llm";
-import { finalizeDefense } from "./citations";
+import { buildFallbackDefense, finalizeDefense } from "./citations";
 import { formatSampleId } from "./sample";
 import type { EvidenceBundle } from "./types";
 
@@ -18,7 +18,21 @@ export const DEFENSE_SYSTEM_PROMPT = [
   "If there are no gaps, state that the item ties out and show the chain: document, payment, ledger.",
 ].join(" ");
 
-export function buildDefensePrompt(bundle: EvidenceBundle): string {
+export type DefendOptions = {
+  /**
+   * Auditor follow-ups this answer must address, oldest first. The accountant
+   * searches the same books either way — gatherEvidence is deterministic — so
+   * a follow-up widens what the answer has to speak to, not what it may cite.
+   */
+  followUps?: readonly string[];
+};
+
+/** Set CROSSFIRE_NO_LLM=1 to run the whole product on deterministic prose. */
+export function llmDisabled(): boolean {
+  return process.env.CROSSFIRE_NO_LLM === "1";
+}
+
+export function buildDefensePrompt(bundle: EvidenceBundle, options: DefendOptions = {}): string {
   const citations = bundle.citations.length
     ? bundle.citations
         .map(
@@ -33,6 +47,18 @@ export function buildDefensePrompt(bundle: EvidenceBundle): string {
     ? bundle.gaps.map((g, i) => `${i + 1}. ${g.kind}: ${g.description}`).join("\n")
     : "(none)";
 
+  const followUps = options.followUps ?? [];
+  const pushBack = followUps.length
+    ? [
+        "",
+        "The auditor was not satisfied and pushed back. Answer these directly, in order:",
+        followUps.map((f, i) => `${i + 1}. ${f}`).join("\n"),
+        "",
+        "The evidence above is the result of searching the books again. If a row the auditor",
+        "asked for is not in that list, it does not exist: say so plainly and do not promise to look further.",
+      ]
+    : [];
+
   return [
     `Sample under audit: ${formatSampleId(bundle.sample)}`,
     "",
@@ -41,6 +67,7 @@ export function buildDefensePrompt(bundle: EvidenceBundle): string {
     "",
     "Gaps found by the reconciliation checks:",
     gaps,
+    ...pushBack,
     "",
     bundle.gaps.length
       ? "Write the accountant's response. Concede the gaps above."
@@ -49,12 +76,39 @@ export function buildDefensePrompt(bundle: EvidenceBundle): string {
 }
 
 /**
- * Adds bundle.defense using exactly one LLM call. The model's paragraph only
+ * Adds bundle.defense using at most one LLM call. The model's paragraph only
  * survives if it satisfies the citation invariant; otherwise the deterministic
- * fallback is used, still without a second request.
+ * fallback is used, still without a second request. A model error (or
+ * CROSSFIRE_NO_LLM=1) falls back the same way rather than throwing, so a run
+ * never fails on the model.
  */
-export async function writeDefense(bundle: EvidenceBundle): Promise<EvidenceBundle> {
-  const modelText = await complete(DEFENSE_SYSTEM_PROMPT, buildDefensePrompt(bundle));
+export async function writeDefense(
+  bundle: EvidenceBundle,
+  options: DefendOptions = {},
+): Promise<EvidenceBundle> {
+  const fallback = (preamble: string) => ({
+    ...bundle,
+    defense: buildFallbackDefense(bundle, { preamble, followUps: options.followUps }),
+  });
+
+  if (llmDisabled()) {
+    return fallback(
+      "This response is assembled directly from the gathered rows: the run was made with the model turned off (CROSSFIRE_NO_LLM).",
+    );
+  }
+
+  let modelText: string;
+  try {
+    modelText = await complete(DEFENSE_SYSTEM_PROMPT, buildDefensePrompt(bundle, options));
+  } catch (err) {
+    console.error(
+      `[accountant/defend] LLM call failed, falling back to the gathered rows: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return fallback(
+      "This response is assembled directly from the gathered rows, because the model call failed.",
+    );
+  }
+
   const final = finalizeDefense(modelText, bundle);
   return { ...bundle, defense: final.defense };
 }

@@ -87,11 +87,29 @@ export function finalizeDefense(modelText: string, bundle: EvidenceBundle): Fina
   return { defense: keepOnlyCitedRows(modelText, bundle), source: "model" };
 }
 
+export type FallbackOptions = {
+  /**
+   * Replaces the default opening sentence, which explains the fallback as a
+   * rejected model paragraph. Set it when the fallback was chosen for another
+   * reason (no model configured, the call failed) so the prose does not
+   * misdescribe what happened.
+   */
+  preamble?: string;
+  /** Auditor follow-ups this answer is responding to, if any. */
+  followUps?: readonly string[];
+};
+
+const DEFAULT_FALLBACK_PREAMBLE =
+  "This response is assembled from the gathered rows rather than written by the model, because the drafted wording did not cite the evidence it relied on.";
+
 /**
  * The deterministic defense: every sentence is built from rows already in the
  * bundle, so it satisfies the invariant by construction. No model call.
  */
-export function buildFallbackDefense(bundle: EvidenceBundle): string {
+export function buildFallbackDefense(
+  bundle: EvidenceBundle,
+  options: FallbackOptions = {},
+): string {
   const sampleId = formatSampleId(bundle.sample);
   const [primary, ...rest] = bundle.citations;
   if (!primary) {
@@ -100,7 +118,7 @@ export function buildFallbackDefense(bundle: EvidenceBundle): string {
 
   const anchor = `[${primary.table}#${primary.id}]`;
   const sentences = [
-    "This response is assembled from the gathered rows rather than written by the model, because the drafted wording did not cite the evidence it relied on.",
+    options.preamble ?? DEFAULT_FALLBACK_PREAMBLE,
     `Sample ${sampleId} rests on ${describe(primary)}.`,
   ];
 
@@ -119,6 +137,11 @@ export function buildFallbackDefense(bundle: EvidenceBundle): string {
     for (const gap of bundle.gaps) {
       sentences.push(`Gap ${gap.kind} on ${anchor}: ${gap.description}`);
     }
+  }
+  if (options.followUps && options.followUps.length > 0) {
+    sentences.push(
+      `The auditor pressed again on ${anchor}; a repeat search of the books returned the same ${bundle.citations.length} rows and nothing further.`,
+    );
   }
   return sentences.join(" ");
 }

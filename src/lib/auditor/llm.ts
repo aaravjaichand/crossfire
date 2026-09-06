@@ -5,6 +5,7 @@
 // Uses the shared client (src/lib/llm.ts): one HTTP request, no retries, a
 // bounded 30s timeout. Falls back to the template text on any error so a
 // slow or failed model call never blocks a run.
+import { llmDisabled } from "@/lib/accountant";
 import { complete } from "@/lib/llm";
 
 const SYSTEM_PROMPT =
@@ -16,9 +17,11 @@ const SYSTEM_PROMPT =
 /**
  * Rephrases `templateText` (already filled with sample facts) into a
  * natural-sounding auditor question. Falls back to `templateText` itself if
- * the API call errors, logging the failure.
+ * the API call errors (or the model is turned off), logging the failure.
  */
 export async function phraseQuestion(templateText: string): Promise<string> {
+  // CROSSFIRE_NO_LLM=1 runs the whole product on the deterministic templates.
+  if (llmDisabled()) return templateText;
   try {
     return await complete(SYSTEM_PROMPT, templateText);
   } catch (err) {
